@@ -146,37 +146,37 @@ def run(game_selector: Union[str, Dict, GameSpec], model_selectors: List[backend
         instances_name: Name of the instances JSON file to use for this benchmark run.
         results_dir: Path to the results directory in which to store the episode records.
     """
-    try:
-        # check games first
-        game_registry = GameRegistry.from_directories_and_cwd_files()
-        game_specs = game_registry.get_game_specs_that_unify_with(game_selector)  # throws error when nothing unifies
-        # check models are available
-        model_registry = ModelRegistry.from_packaged_and_cwd_files()
-        unified_model_specs = []
-        for model_selector in model_selectors:
-            unified_model_spec = model_registry.get_first_model_spec_that_unify_with(model_selector)
-            logger.info(f"Found registered model spec that unifies with {model_selector.to_string()} "
-                        f"-> {unified_model_spec}")
-            unified_model_specs.append(unified_model_spec)
-        # check backends are available
-        backend_registry = BackendRegistry.from_packaged_and_cwd_files()
-        for unified_model_spec in unified_model_specs:
-            backend_selector = unified_model_spec.backend
-            if not backend_registry.is_supported(backend_selector):
-                raise ValueError(f"Specified model backend '{backend_selector}' not found in backend registry.")
-            logger.info(f"Found registry entry for backend {backend_selector} "
-                        f"-> {backend_registry.get_first_file_matching(backend_selector)}")
-        # ready to rumble, do the heavy lifting only now, that is, loading the additional modules
-        player_models = []
-        for unified_model_spec in unified_model_specs:
-            logger.info(f"Dynamically import backend {unified_model_spec.backend}")
-            backend = backend_registry.get_backend_for(unified_model_spec.backend)
-            model = backend.get_model_for(unified_model_spec)
-            model.set_gen_args(**gen_args)  # todo make this somehow available in generate method?
-            logger.info(f"Successfully loaded {unified_model_spec.model_name} model")
-            player_models.append(model)
+    # check games first
+    game_registry = GameRegistry.from_directories_and_cwd_files()
+    game_specs = game_registry.get_game_specs_that_unify_with(game_selector)  # throws error when nothing unifies
+    # check models are available
+    model_registry = ModelRegistry.from_packaged_and_cwd_files()
+    unified_model_specs = []
+    for model_selector in model_selectors:
+        unified_model_spec = model_registry.get_first_model_spec_that_unify_with(model_selector)
+        logger.info(f"Found registered model spec that unifies with {model_selector.to_string()} "
+                    f"-> {unified_model_spec}")
+        unified_model_specs.append(unified_model_spec)
+    # check backends are available
+    backend_registry = BackendRegistry.from_packaged_and_cwd_files()
+    for unified_model_spec in unified_model_specs:
+        backend_selector = unified_model_spec.backend
+        if not backend_registry.is_supported(backend_selector):
+            raise ValueError(f"Specified model backend '{backend_selector}' not found in backend registry.")
+        logger.info(f"Found registry entry for backend {backend_selector} "
+                    f"-> {backend_registry.get_first_file_matching(backend_selector)}")
+    # ready to rumble, do the heavy lifting only now, that is, loading the additional modules
+    player_models = []
+    for unified_model_spec in unified_model_specs:
+        logger.info(f"Dynamically import backend {unified_model_spec.backend}")
+        backend = backend_registry.get_backend_for(unified_model_spec.backend)
+        model = backend.get_model_for(unified_model_spec)
+        model.set_gen_args(**gen_args)  # todo make this somehow available in generate method?
+        logger.info(f"Successfully loaded {unified_model_spec.model_name} model")
+        player_models.append(model)
 
-        for game_spec in game_specs:
+    for game_spec in game_specs:
+        try:
             with benchmark.load_from_spec(game_spec, instances_name=instances_name) as game_benchmark:
                 logger.info(
                     f'Running {game_spec["game_name"]} '
@@ -195,10 +195,9 @@ def run(game_selector: Union[str, Dict, GameSpec], model_selectors: List[backend
                     logger.error(e, exc_info=True)
                 time_end = datetime.now()
                 logger.info(f'Running {game_spec["game_name"]} took {str(time_end - time_start)}')
-
-    except Exception as e:
-        stdout_logger.exception(e)
-        logger.error(e, exc_info=True)
+        except Exception as e:
+            stdout_logger.exception(e)
+            logger.error(e, exc_info=True)
 
 
 def score(game_selector: Union[str, Dict, GameSpec], experiment_name: str = None, results_dir: str = None):
