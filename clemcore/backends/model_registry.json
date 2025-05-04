@@ -5802,5 +5802,33 @@
             "premade_chat_template": true,
             "eos_to_cull": "<\\|eot_id\\|>"
         }
+    },
+    {
+        "model_name": "Unsloth-Llama-3-8B",
+        "backend": "huggingface_local",
+        "huggingface_id": "unsloth/llama-3-8b",
+        "release_date": "2024-07-23",
+        "open_weight": true,
+        "parameters": "8B",
+        "languages": [
+            "en",
+            "de",
+            "fr",
+            "it",
+            "pt",
+            "hi",
+            "es",
+            "th"
+        ],
+        "context_size": "128k",
+        "license": {
+            "name": "Meta",
+            "url": "https://github.com/meta-llama/llama-models/blob/main/models/llama3_1/LICENSE"
+        },
+        "model_config": {
+            "requires_api_key": true,
+            "premade_chat_template": true,
+            "eos_to_cull": "<\\|eot_id\\|>"
+        }
     }
 ]
