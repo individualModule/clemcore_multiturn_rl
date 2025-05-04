@@ -2,6 +2,7 @@ import abc
 from copy import deepcopy
 from datetime import datetime
 from typing import List, Dict, Union
+import torch
 
 from clemcore import backends
 from clemcore.clemgame.recorder import GameRecorder, NoopGameRecorder
@@ -126,6 +127,11 @@ class Player(abc.ABC):
     def get_last_call_info(self):
         return self._prompt, self._response_object
 
+    def get_logprobs(self,observation: Union[str, List[str]], action: Union[str, List[str]]) -> torch.Tensor:
+        logprobs = self.model(observation, action)
+
+        return logprobs
+    
     def __call__(self, context: Dict, memorize: bool = True) -> str:
         """
         Let the player respond (act verbally) to a given context.
