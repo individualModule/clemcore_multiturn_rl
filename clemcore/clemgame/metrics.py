@@ -6,9 +6,10 @@ Important: If the game is aborted, all episode-level scores must be set to numpy
 and turn-level scores can be computed for the valid turns before the abortion action.
 """
 import logging
-from typing import Dict
+from pathlib import Path
+from typing import Dict, Union
 
-from clemcore.clemgame.resources import store_results_file
+from clemcore.clemgame.resources import store_file
 
 # common names
 METRIC_ABORTED = "Aborted"
@@ -107,26 +108,9 @@ class GameScorer:
             "episode scores": {},
         }
 
-    # mapworld games use this method directly ... because they overwrite store_scores to store images
-    # we should maybe add an on_store_scores hook for this already providing the full path to the episode dir
-    def store_results_file(self, data, file_name: str, dialogue_pair: str,
-                           sub_dir: str = None, results_dir: str = None):
-        store_results_file(self.game_name, data, file_name,
-                           dialogue_pair=dialogue_pair,
-                           sub_dir=sub_dir,
-                           results_dir=results_dir)
-
-    def store_scores(self, results_root: str, dialogue_pair: str, game_record_dir: str):
-        """Store calculated scores to scores.json file.
-        Args:
-            results_root: The root path to the results directory.
-            dialogue_pair: A string path to the Player pair results directory.
-            game_record_dir: The game's record directory path.
-        """
-        store_results_file(self.game_name, self.scores, "scores.json",
-                           dialogue_pair=dialogue_pair,
-                           sub_dir=game_record_dir,
-                           results_dir=results_root)
+    def store_scores(self, interactions_dir: Union[str, Path]):
+        """Store calculated scores to scores.json file."""
+        store_file(self.scores, "scores.json", interactions_dir)
 
     def log_turn_score(self, turn_idx, score_name, score_value):
         """Record a turn-level score for a single turn.

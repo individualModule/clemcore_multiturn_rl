@@ -1,3 +1,4 @@
+import glob
 import importlib.util
 import inspect
 import logging
@@ -7,6 +8,7 @@ import sys
 from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime
+from pathlib import Path
 from typing import List, Dict, ContextManager, Tuple
 from tqdm import tqdm
 
@@ -15,7 +17,7 @@ from clemcore.clemgame.master import GameMaster
 from clemcore.clemgame.metrics import GameScorer
 from clemcore.clemgame.recorder import GameRecorder, DefaultGameRecorder
 from clemcore.clemgame.registry import GameSpec
-from clemcore.clemgame.resources import GameResourceLocator, store_results_file
+from clemcore.clemgame.resources import GameResourceLocator, store_results_file, load_json
 
 module_logger = logging.getLogger(__name__)
 stdout_logger = logging.getLogger("clemcore.run")
@@ -99,47 +101,31 @@ class GameBenchmark(GameResourceLocator):
             results_dir: Path to the results directory.
         """
         results_root = results_dir
-        dialogue_partners = [model_dir for model_dir in os.listdir(results_root)
-                             if os.path.isdir(os.path.join(results_root, model_dir))]
-        for dialogue_pair in dialogue_partners:
-            game_result_path = os.path.join(results_root, dialogue_pair, self.game_name)
-            if not os.path.exists(game_result_path) or not os.path.isdir(game_result_path):
-                stdout_logger.info("No results directory found at: " + game_result_path)
-                continue
+        filter_games = [self.game_name]
+        interaction_files = glob.glob(os.path.join(results_root, '**', 'interactions.json'), recursive=True)
+        if filter_games:
+            interaction_files = [interaction_file for interaction_file in interaction_files
+                                 if any(game_name in interaction_file for game_name in filter_games)]
+        stdout_logger.info(f"Found {len(interaction_files)} interaction files to score. "
+                           f"Games: {filter_games if filter_games else 'all'}")
+        error_count = 0
+        for interaction_file in tqdm(interaction_files, desc="Scoring episodes"):
+            try:
+                interactions = load_json(interaction_file)
+                interactions_dir = Path(interaction_file).parent
+                instance = load_json(os.path.join(interactions_dir, "instance.json"))  # sibling file
+                experiment_dir = interactions_dir.parent
+                experiment = load_json(os.path.join(experiment_dir, "experiment.json"))  # parent file
 
-            experiment_dirs = [experiment_dir for experiment_dir in os.listdir(game_result_path)
-                               if os.path.isdir(os.path.join(game_result_path, experiment_dir))]
-            if not experiment_dirs:
-                stdout_logger.warning(f"{self.game_name}: No experiments for {dialogue_pair}")
-            for experiment_dir in experiment_dirs:
-                experiment_path = os.path.join(game_result_path, experiment_dir)
-                experiment_name = "_".join(experiment_dir.split("_")[1:])  # remove leading index number
-                if self.filter_experiment and experiment_name not in self.filter_experiment:
-                    stdout_logger.info(f"Skip experiment {experiment_name}")
-                    continue
-                stdout_logger.info(f"Scoring: {experiment_name}")
-                experiment_config = self.load_results_json(f"{experiment_dir}/experiment_{experiment_name}",
-                                                           results_root, dialogue_pair)
-                episode_dirs = [file for file in os.listdir(experiment_path)
-                                if os.path.isdir(os.path.join(experiment_path, file))]
-                error_count = 0
-                for episode_dir in tqdm(episode_dirs, desc="Scoring episodes"):
-                    try:
-                        rel_episode_path = f"{experiment_dir}/{episode_dir}"
-                        game_instance = self.load_results_json(f"{rel_episode_path}/instance",
-                                                               results_root, dialogue_pair)
-                        game_interactions = self.load_results_json(f"{rel_episode_path}/interactions",
-                                                                   results_root, dialogue_pair)
-
-                        game_scorer = self.create_game_scorer(experiment_config, game_instance)
-                        game_scorer.compute_scores(game_interactions)
-                        game_scorer.store_scores(results_root, dialogue_pair, rel_episode_path)
-                    except Exception:  # continue with other episodes if something goes wrong
-                        module_logger.exception(f"{self.game_name}: Cannot score {episode_dir} (but continue)")
-                        error_count += 1
-                if error_count > 0:
-                    stdout_logger.error(
-                        f"{self.game_name}: '{error_count}' exceptions occurred: See clembench.log for details.")
+                game_scorer = self.create_game_scorer(experiment, instance)
+                game_scorer.compute_scores(interactions)
+                game_scorer.store_scores(interactions_dir)  # store scores.json as sibling file
+            except Exception:  # continue with other episodes if something goes wrong
+                module_logger.exception(f"{self.game_name}: Cannot score {interaction_file} (but continue)")
+                error_count += 1
+        if error_count > 0:
+            stdout_logger.error(
+                f"{self.game_name}: '{error_count}' exceptions occurred: See clembench.log for details.")
 
     def run(self, player_models: List[backends.Model], results_dir: str):
         """Runs game-play on all game instances for a game.
@@ -217,7 +203,7 @@ class GameBenchmark(GameResourceLocator):
                 experiment_config["dialogue_partners"] = dialogue_pair_desc
 
                 store_results_file(self.game_name, experiment_config,
-                                   f"experiment_{experiment_name}.json",
+                                   f"experiment.json",
                                    dialogue_pair_desc,
                                    sub_dir=experiment_record_dir,
                                    results_dir=results_root)
@@ -256,7 +242,7 @@ class GameBenchmark(GameResourceLocator):
                 time_experiment_end = datetime.now() - time_experiment_start
                 experiment_config["duration"] = str(time_experiment_end)
                 store_results_file(self.game_name, experiment_config,
-                                   f"experiment_{experiment_name}.json",
+                                   f"experiment.json",
                                    dialogue_pair_desc,
                                    sub_dir=experiment_record_dir,
                                    results_dir=results_root)
