@@ -107,11 +107,9 @@ class GameBranchingEnv(PlayPenEnv):
         # return all dones and infos so that they match the quantity of the responses
         return context_dones, context_infos
 
-    def store_records(self, top_dir: str, rollout_dir: str, episode_dir: str,
-                      store_experiment: bool = False, store_instance: bool = False):
+    def store_records(self, top_dir: str, rollout_dir: str, episode_dir: str):
         for branch_idx, game_env in enumerate(self._active_envs):
-            game_env.store_records(top_dir, rollout_dir, os.path.join(episode_dir, f"branch_{branch_idx}"),
-                                   store_experiment, store_instance)
+            game_env.store_records(top_dir, rollout_dir, os.path.join(episode_dir, f"branch_{branch_idx}"))
 
     def get_active_tree(self) -> "GameTree":
         """ Ad-hoc calculation of the tree containing only active branches """
