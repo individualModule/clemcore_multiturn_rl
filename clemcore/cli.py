@@ -200,7 +200,7 @@ def run(game_selector: Union[str, Dict, GameSpec], model_selectors: List[backend
             logger.error(e, exc_info=True)
 
 
-def score(game_selector: Union[str, Dict, GameSpec], experiment_name: str = None, results_dir: str = None):
+def score(game_selector: Union[str, Dict, GameSpec], results_dir: str = None):
     """Calculate scores from a game benchmark run's records and store score files.
     Args:
         game_selector: Name of the game, matching the game's name in the game registry, OR GameSpec-like dict, OR GameSpec.
@@ -211,16 +211,11 @@ def score(game_selector: Union[str, Dict, GameSpec], experiment_name: str = None
     logger.info(f"Scoring game {game_selector}")
     stdout_logger.info(f"Scoring game {game_selector}")
 
-    if experiment_name:
-        logger.info("Only scoring experiment: %s", experiment_name)
-
     game_registry = GameRegistry.from_directories_and_cwd_files()
     game_specs = game_registry.get_game_specs_that_unify_with(game_selector)
     for game_spec in game_specs:
         try:
             with benchmark.load_from_spec(game_spec, do_setup=False) as game_benchmark:
-                if experiment_name:
-                    game_benchmark.filter_experiment.append(experiment_name)
                 time_start = datetime.now()
                 game_benchmark.compute_scores(results_dir)
                 time_end = datetime.now()
@@ -282,7 +277,7 @@ def cli(args: argparse.Namespace):
             instances_name=args.instances_name,
             results_dir=args.results_dir)
     if args.command_name == "score":
-        score(args.game, experiment_name=args.experiment_name, results_dir=args.results_dir)
+        score(args.game, results_dir=args.results_dir)
     if args.command_name == "transcribe":
         transcripts(args.game, results_dir=args.results_dir)
     if args.command_name == "eval":
@@ -386,8 +381,6 @@ def main():
                                  "When not specified, then the results will be located in 'results'")
 
     score_parser = sub_parsers.add_parser("score")
-    score_parser.add_argument("-e", "--experiment_name", type=str,
-                              help="Optional argument to only run a specific experiment")
     score_parser.add_argument("-g", "--game", type=str,
                               help='A specific game name (see ls), a GameSpec-like JSON string object or "all" (default).',
                               default="all")
