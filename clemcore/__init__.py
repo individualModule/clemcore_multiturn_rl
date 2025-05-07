@@ -8,15 +8,16 @@ import clemcore.backends as backends
 
 BANNER = \
     r"""
-      _                _                     _     
-     | |              | |                   | |    
-  ___| | ___ _ __ ___ | |__   ___ _ __   ___| |__  
- / __| |/ _ \ '_ ` _ \| '_ \ / _ \ '_ \ / __| '_ \ 
-| (__| |  __/ | | | | | |_) |  __/ | | | (__| | | |
- \___|_|\___|_| |_| |_|_.__/ \___|_| |_|\___|_| |_|
+      _                                   
+     | |                                  
+  ___| | ___ _ __ ___   ___ ___  _ __ ___ 
+ / __| |/ _ \ '_ ` _ \ / __/ _ \| '__/ _ \
+| (__| |  __/ | | | | | (_| (_) | | |  __/
+ \___|_|\___|_| |_| |_|\___\___/|_|  \___|
 """  # doom font, thanks to http://patorjk.com/software/taag/
 
-print(BANNER)
+if os.getenv("CLEM_DISABLE_BANNER", "0") not in ("1", "true", "yes", "on"):
+    print(BANNER)
 
 
 def load_logging_config():
