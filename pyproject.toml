@@ -36,12 +36,12 @@ dependencies = [
 
 [project.optional-dependencies]
 vllm = [
-    "torch==2.6.0",
+    "torch~=2.6.0",
     "transformers==4.51.1",
     "vllm==0.8.4" # requires: torch==2.6.0 transformers>=4.51.1 cuda==12.4 openai>=1.52.0
 ]
 huggingface = [
-    "torch==2.1.1",
+    "torch~=2.1.1",
     "sentencepiece==0.1.99",
     "accelerate==1.2.1",
     "protobuf==4.21.6",
