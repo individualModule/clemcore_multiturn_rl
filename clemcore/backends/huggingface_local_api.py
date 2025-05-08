@@ -155,6 +155,62 @@ class HuggingfaceLocalModel(backends.Model):
             self.model.generation_config.pad_token_id = self.tokenizer.eos_token_id
 
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        
+    def calculate_logprobs(self, observation: Union[str, List[str]], action: Union[str, List[str]]) -> torch.Tensor:
+        """Calculate log probabilities for observation-action pairs.
+        
+        Args:
+            observation: Single observation or batch of observations
+            action: Single action or batch of actions
+            
+        Returns:
+            Tensor containing log probabilities for each sequence
+        """
+        # Convert single strings to lists for batch processing
+        if isinstance(observation, str):
+            observation = [observation]
+        if isinstance(action, str):
+            action = [action]
+        
+        # Ensure matching batch sizes
+        assert len(observation) == len(action), "Observation and action batches must have same length"
+        
+        # Tokenize both observation and action
+        obs_tokens = self.tokenizer(observation, 
+                                  return_tensors='pt',
+                                  padding=True,
+                                  truncation=True,
+                                  max_length=512).to(self.device)
+        
+        action_tokens = self.tokenizer(action,
+                                     return_tensors='pt', 
+                                     padding=True,
+                                     truncation=True,
+                                     max_length=512).to(self.device)
+
+        # Get the full sequence by concatenating
+        full_input_ids = torch.cat([obs_tokens['input_ids'], action_tokens['input_ids']], dim=1)
+        attention_mask = torch.cat([obs_tokens['attention_mask'], action_tokens['attention_mask']], dim=1)
+
+        # Get model outputs
+        outputs = self.model(input_ids=full_input_ids, attention_mask=attention_mask)
+        
+        # Calculate probabilities
+        logits = outputs.logits
+        probs = self.softmax(logits)
+        
+        # Get probabilities of the actual tokens that were generated
+        # We look at the logits for positions corresponding to the action tokens
+        action_probs = torch.gather(
+            probs[:, obs_tokens['input_ids'].size(1)-1:-1], 
+            2,
+            action_tokens['input_ids'].unsqueeze(2)
+        ).squeeze(2)
+        
+        # Calculate log probabilities and mask
+        log_probs = torch.log(action_probs) * action_tokens['attention_mask']
+        
+        return log_probs
 
     def generate_response(self, messages: List[Dict],
                           return_full_text: bool = False,

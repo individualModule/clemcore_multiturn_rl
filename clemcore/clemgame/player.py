@@ -164,6 +164,11 @@ class Player(abc.ABC):
 
         self._is_initial_call = False
         return response_text
+    
+    def get_logprobs(self,observation: Union[str, List[str]], action: Union[str, List[str]]) -> torch.Tensor:
+        logprobs = self.model.calculate_logprobs(observation, action)
+
+        return logprobs
 
     def __call_model(self, context: Dict):
         response_object = dict()
