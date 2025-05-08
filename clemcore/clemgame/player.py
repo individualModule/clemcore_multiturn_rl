@@ -2,6 +2,7 @@ import abc
 from copy import deepcopy
 from datetime import datetime
 from typing import List, Dict, Union
+import torch
 
 from clemcore import backends
 from clemcore.clemgame.recorder import GameRecorder, NoopGameRecorder
