@@ -1,0 +1,7 @@
+[
+  {
+    "game_name": "guesswhat",
+    "game_path": "../clembench_multiturn_rl/guesswhat",
+    "player": "two"
+  }
+]

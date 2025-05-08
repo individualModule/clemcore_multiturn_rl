@@ -128,7 +128,7 @@ class Player(abc.ABC):
         return self._prompt, self._response_object
 
     def get_logprobs(self,observation: Union[str, List[str]], action: Union[str, List[str]]) -> torch.Tensor:
-        logprobs = self.model(observation, action)
+        logprobs = self.model.calculate_logprobs(observation, action)
 
         return logprobs
     
