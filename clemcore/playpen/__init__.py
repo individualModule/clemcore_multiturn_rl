@@ -5,7 +5,7 @@ from clemcore.backends import Model
 from clemcore.clemgame import GameSpec, benchmark
 from clemcore.playpen.buffers import RolloutBuffer, BranchingRolloutBuffer, StepRolloutBuffer
 from clemcore.playpen.callbacks import BaseCallback, GameRecordCallback, RolloutProgressCallback, CallbackList
-from clemcore.playpen.base import BasePlayPen
+from clemcore.playpen.base import BasePlayPen, BasePlayPenMultiturn
 from clemcore.playpen.envs import PlayPenEnv
 from clemcore.playpen.envs.game_env import GameEnv
 from clemcore.playpen.envs.branching_env import GameBranchingEnv
@@ -16,6 +16,7 @@ __all__ = [
     "RolloutProgressCallback",
     "CallbackList",
     "BasePlayPen",
+    "BasePlayPenMultiturn",
     "PlayPenEnv",
     "RolloutBuffer",
     "BranchingRolloutBuffer",

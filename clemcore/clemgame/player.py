@@ -166,6 +166,13 @@ class Player(abc.ABC):
         self._is_initial_call = False
         return response_text
     
+    def get_context(self):
+        """
+        Returns full context for the player.
+        Reason for the fn -> Needed for playpen - currently we get only single-turned context 
+        """
+        return self._messages
+    
     def get_logprobs(self,observation: Union[str, List[str]], action: Union[str, List[str]]) -> torch.Tensor:
         logprobs = self.model.calculate_logprobs(observation, action)
 

@@ -47,3 +47,47 @@ class BasePlayPen(abc.ABC):
     @abc.abstractmethod
     def learn_interactive(self, game_registry: GameRegistry):
         pass
+
+
+class BasePlayPenMultiturn(BasePlayPen):
+    """
+    Base Playpen with a changed _collect_rollouts class to support multiturn context (as opposed to currently single turn).
+    Also needs to differentiate between the number of players in the game.
+
+    Pass the game-specific name of the player you want to collect rollouts for.
+    """
+
+    def _collect_rollouts(self, game_env: PlayPenEnv, rollout_steps: int, rollout_buffer: RolloutBuffer, forPlayer='Guesser'):
+        # Notify callbacks that rollout is starting
+        self.callbacks.on_rollout_start(game_env, self.num_timesteps)
+        rollout_buffer.initial_prompts = game_env.initial_prompts
+
+        num_rollout_steps = 0
+        while num_rollout_steps < rollout_steps:
+
+            player, context = game_env.observe()
+            response = player(context)
+            done, info = game_env.step(response)
+            num_rollout_steps += 1
+            self.num_timesteps += 1
+
+            # Retrieve the full context for the turn
+            full_context = player.get_context()[:-1]  # Ensure this is unique for each step
+            # Add to buffer only if the player's name matches `forPlayer`
+            if forPlayer in player.name:
+                rollout_buffer.on_step(
+                    context=full_context.copy() if isinstance(full_context, dict) else full_context[:],
+                    response=response,
+                    done=done,
+                    info=info.copy() if isinstance(info, dict) else info[:]
+                )
+
+            self.callbacks.update_locals(locals())
+            self.callbacks.on_step()
+
+            if game_env.is_done():
+                rollout_buffer.on_done()
+                game_env.reset()
+
+        # Notify callbacks that rollout has ended
+        self.callbacks.on_rollout_end()
