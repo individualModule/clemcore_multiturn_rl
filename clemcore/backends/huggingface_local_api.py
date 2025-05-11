@@ -156,7 +156,9 @@ class HuggingfaceLocalModel(backends.Model):
 
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         
-    def calculate_logprobs(self, observation: Union[str, List[str]], action: Union[str, List[str]]) -> torch.Tensor:
+    def calculate_logprobs(self, observation: Union[List[dict], List[List[dict]]],
+                                 action: Union[List[dict], List[List[dict]]]) -> torch.Tensor:
+        
         """Calculate log probabilities for observation-action pairs.
         
         Args:
@@ -166,28 +168,20 @@ class HuggingfaceLocalModel(backends.Model):
         Returns:
             Tensor containing log probabilities for each sequence
         """
-        # Convert single strings to lists for batch processing
-        if isinstance(observation, str):
-            observation = [observation]
-        if isinstance(action, str):
-            action = [action]
-        
-        # Ensure matching batch sizes
-        assert len(observation) == len(action), "Observation and action batches must have same length"
-        
-        # Tokenize both observation and action
-        obs_tokens = self.tokenizer(observation, 
-                                  return_tensors='pt',
-                                  padding=True,
-                                  truncation=True,
-                                  max_length=512).to(self.device)
-        
-        action_tokens = self.tokenizer(action,
-                                     return_tensors='pt', 
-                                     padding=True,
-                                     truncation=True,
-                                     max_length=512).to(self.device)
 
+        # assert that both entries are the same format
+        # if isinstance(observation[0], list):
+        #     # if the item inside observation is a list - we are dealing with batches. 
+        assert len(observation) == len(action), "Observation and action batches must have same length"
+        #     assert isinstance(action[0], list)
+
+        # do we need padding? 
+        obs_tokens = self.tokenizer.apply_chat_template(observation, add_generation_prompt=False,
+                                                           return_tensors="pt").to(self.device)
+        action_tokens = self.tokenizer.apply_chat_template(action, add_generation_prompt=False,
+                                                           return_tensors="pt").to(self.device)
+
+        
         # Get the full sequence by concatenating
         full_input_ids = torch.cat([obs_tokens['input_ids'], action_tokens['input_ids']], dim=1)
         attention_mask = torch.cat([obs_tokens['attention_mask'], action_tokens['attention_mask']], dim=1)
