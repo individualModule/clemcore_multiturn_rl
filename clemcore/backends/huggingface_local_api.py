@@ -148,7 +148,7 @@ class HuggingfaceLocalModel(backends.Model):
         # fail-fast
         self.tokenizer, self.config, self.context_size = load_config_and_tokenizer(model_spec)
         self.model = load_model(model_spec)
-
+        self.softmax = torch.nn.Softmax(dim=-1)  # softmax over vocabulary dimension   
         # check if model's generation_config has pad_token_id set:
         if not self.model.generation_config.pad_token_id:
             # set pad_token_id to tokenizer's eos_token_id to prevent excessive warnings:
@@ -176,12 +176,13 @@ class HuggingfaceLocalModel(backends.Model):
         #     assert isinstance(action[0], list)
 
         # do we need padding? 
-        obs_tokens = self.tokenizer.apply_chat_template(observation, add_generation_prompt=False,
-                                                           return_tensors="pt").to(self.device)
-        action_tokens = self.tokenizer.apply_chat_template(action, add_generation_prompt=False,
-                                                           return_tensors="pt").to(self.device)
+        obs_template = self.tokenizer.apply_chat_template(observation, tokenize=False)
+        action_template = self.tokenizer.apply_chat_template(action, tokenize=False)
 
-        
+        obs_tokens = self.tokenizer(obs_template, padding=True, truncation=True, return_tensors="pt").to(self.device)
+        action_tokens = self.tokenizer(action_template, padding=True, truncation=True, return_tensors="pt").to(self.device)
+
+
         # Get the full sequence by concatenating
         full_input_ids = torch.cat([obs_tokens['input_ids'], action_tokens['input_ids']], dim=1)
         attention_mask = torch.cat([obs_tokens['attention_mask'], action_tokens['attention_mask']], dim=1)
