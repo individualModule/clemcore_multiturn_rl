@@ -135,17 +135,8 @@ class Player(abc.ABC):
             self.__log_send_context_event(memorized_initial_prompt["content"], label="initial prompt")
 
         self.__log_send_context_event(context["content"], label="context" if memorize else "forget")
-        call_start = datetime.now()
         self._prompt, self._response_object, response_text = self.__call_model(context)
-        call_duration = datetime.now() - call_start
         self.__log_response_received_event(response_text, label="response" if memorize else "forget")
-
-        self._response_object["clem_player"] = {
-            "call_start": str(call_start),
-            "call_duration": str(call_duration),
-            "response": response_text,
-            "model_name": self.model.get_name()
-        }
 
         # Copy context, so that original context given to the player is kept on forget extras. This is, for
         # example, necessary to collect the original contexts in the rollout buffer for playpen training.
@@ -166,6 +157,7 @@ class Player(abc.ABC):
         return response_text
 
     def __call_model(self, context: Dict):
+        call_start = datetime.now()
         response_object = dict()
         prompt = context
         if isinstance(self.model, backends.CustomResponseModel):
@@ -174,6 +166,13 @@ class Player(abc.ABC):
             response_text = self._terminal_response(context)
         else:
             prompt, response_object, response_text = self.model.generate_response(self._messages + [context])
+        call_duration = datetime.now() - call_start
+        self._response_object["clem_player"] = {
+            "call_start": str(call_start),
+            "call_duration": str(call_duration),
+            "response": response_text,
+            "model_name": self.model.get_name()
+        }
         return prompt, response_object, response_text
 
     def _terminal_response(self, context: Dict) -> str:
