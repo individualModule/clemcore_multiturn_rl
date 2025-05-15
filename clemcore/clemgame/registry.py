@@ -86,7 +86,7 @@ class GameSpec(SimpleNamespace):
             game_dict = json.loads(game_string)
             return GameSpec.from_dict(game_dict, allow_underspecified=True)
         except Exception as e:  # likely not a json
-            return GameSpec.from_name(game_string, allow_underspecified=True)
+            return GameSpec.from_name(game_string)
 
     @classmethod
     def from_directory(cls, dir_path: str) -> List["GameSpec"]:
