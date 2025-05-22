@@ -203,8 +203,9 @@ class HuggingfaceLocalModel(backends.Model):
         ).squeeze(2)
         
         # Calculate log probabilities and mask
-        log_probs = torch.log(action_probs) * action_tokens['attention_mask']
-        
+        epsilon = 1e-10 # to avoid errors 
+        log_probs = torch.log(action_probs + epsilon) * action_tokens['attention_mask']     
+
         return log_probs
 
     def generate_response(self, messages: List[Dict],
