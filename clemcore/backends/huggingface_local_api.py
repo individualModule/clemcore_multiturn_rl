@@ -6,6 +6,7 @@ from typing import List, Dict, Tuple, Any, Union
 import torch
 import re
 from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig
+from peft import PeftModel
 from jinja2 import TemplateError
 
 import clemcore.backends as backends
@@ -113,6 +114,10 @@ def load_model(model_spec: backends.ModelSpec) -> Any:
         model = AutoModelForCausalLM.from_pretrained(hf_model_str, token=api_key, device_map="auto", torch_dtype="auto")
     else:
         model = AutoModelForCausalLM.from_pretrained(hf_model_str, device_map="auto", torch_dtype="auto")
+
+    if "peft_model" in model_spec.model_config:
+        adapter_model = model_spec.model_config["peft_model"] # can be a path or name
+        model = PeftModel.from_pretrained(model, adapter_model)
 
     logger.info(f"Finished loading huggingface model: {model_spec.model_name}")
     logger.info(f"Model device map: {model.hf_device_map}")
