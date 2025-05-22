@@ -13,6 +13,7 @@ import clemcore.backends as backends
 from clemcore.backends.utils import ensure_alternating_roles
 
 logger = logging.getLogger(__name__)
+stdout_logger = logging.getLogger("clemcore.cli")
 
 FALLBACK_CONTEXT_SIZE = 256
 
@@ -116,7 +117,8 @@ def load_model(model_spec: backends.ModelSpec) -> Any:
         model = AutoModelForCausalLM.from_pretrained(hf_model_str, device_map="auto", torch_dtype="auto")
 
     if "peft_model" in model_spec.model_config:
-        adapter_model = model_spec.model_config["peft_model"] # can be a path or name
+        adapter_model = model_spec.model_config["peft_model"]  # can be a path or name
+        stdout_logger.info(f"Load PeftModel adapters from {adapter_model}")
         model = PeftModel.from_pretrained(model, adapter_model)
 
     logger.info(f"Finished loading huggingface model: {model_spec.model_name}")
