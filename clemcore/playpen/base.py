@@ -68,7 +68,6 @@ class BasePlayPenMultiturn(BasePlayPen):
             player, context = game_env.observe()
             response = player(context) # returns a string - we don't want that
             done, info = game_env.step(response)
-            num_rollout_steps += 1
             self.num_timesteps += 1
 
             # Retrieve the full context for the turn
@@ -76,6 +75,8 @@ class BasePlayPenMultiturn(BasePlayPen):
             response_dict = player.get_context()[-1:] # get the player response only. Return as list
             # Add to buffer only if the player's name matches `forPlayer`
             if forPlayer in player.name:
+                # only count rollout step if it's for the player we are trainign.
+                num_rollout_steps += 1
                 rollout_buffer.on_step(
                     context=full_context.copy() if isinstance(full_context, dict) else full_context[:],
                     response=response_dict.copy(),
