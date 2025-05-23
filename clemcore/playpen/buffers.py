@@ -1,4 +1,5 @@
 from typing import List, Dict
+import random
 
 from clemcore.clemgame import Player
 from clemcore.playpen.envs.game_env import GameEnv
@@ -62,3 +63,31 @@ class BranchingRolloutBuffer(RolloutBuffer):
 
     def reset(self):
         self.forest = []
+
+
+class ReplayBuffer(StepRolloutBuffer):
+    """Replay buffer with a fixed size that removes the oldest samples when full."""
+
+    def __init__(self, game_env: GameEnv, buffer_size: int, sample_size: int):
+        super().__init__(game_env)
+        self.buffer_size = buffer_size
+        self.sample_size = sample_size
+
+    def on_done(self):
+        """Add the current trajectory to the buffer and enforce buffer size."""
+        super().on_done()
+        # Remove the oldest trajectories if the buffer exceeds its size
+        excess_count = len(self.trajectories) - self.buffer_size
+        if excess_count > 0:
+            self.trajectories = self.trajectories[excess_count:]  # Keep only the most recent trajectories
+
+    def sample(self, batch_size: int):
+        """Randomly sample trajectories from the buffer."""
+        if len(self.trajectories) < batch_size:
+            raise ValueError("Not enough trajectories in the buffer to sample the requested batch size.")
+        return random.sample(self.trajectories, batch_size)
+
+    @property
+    def trajectories(self):
+        """Return a random sample of trajectories."""
+        return self.sample(self.sample_size)
