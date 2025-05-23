@@ -69,6 +69,9 @@ class ReplayBuffer(StepRolloutBuffer):
     """Replay buffer with a fixed size that removes the oldest samples when full."""
 
     def __init__(self, game_env: GameEnv, buffer_size: int, sample_size: int):
+        """
+        buffer size defines trajectories currently. Should it define steps/
+        """
         super().__init__(game_env)
         self.buffer_size = buffer_size
         self.sample_size = sample_size
