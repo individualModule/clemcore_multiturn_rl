@@ -55,13 +55,13 @@ class BasePlayPenMultiturnTrajectory(BasePlayPen):
     instead of steps, while maintaining the multiturn logic from BasePlayPenMultiturn.
     """
 
-    def _collect_rollouts(self, game_env: PlayPenEnv, num_trajectories: int, rollout_buffer: RolloutBuffer, forPlayer='Guesser'):
+    def _collect_rollouts(self, game_env: PlayPenEnv, rollout_steps: int, rollout_buffer: RolloutBuffer, forPlayer='Guesser'):
         # Notify callbacks that rollout is starting
         self.callbacks.on_rollout_start(game_env, self.num_timesteps)
         rollout_buffer.initial_prompts = game_env.initial_prompts
 
         collected_trajectories = 0
-        while collected_trajectories < num_trajectories:
+        while collected_trajectories < rollout_steps:
             player, context = game_env.observe()
             response = player(context)  # Returns a string - we don't want that
             done, info = game_env.step(response)
