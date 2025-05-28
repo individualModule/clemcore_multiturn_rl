@@ -69,7 +69,11 @@ class BranchingRolloutBuffer(RolloutBuffer):
 
 
 class ReplayBuffer(StepRolloutBuffer):
-    """Replay buffer with a fixed size that removes the oldest samples when full."""
+    """Replay buffer with a fixed size that removes the oldest samples when full.
+    
+    ! on step not working as intended -> without resetting, length of self.current_Trajectory becomes > than self.trajectories.
+      Out of range index error.
+    """
 
     def __init__(self, game_env: GameEnv, buffer_size: int, sample_size: int):
         """
