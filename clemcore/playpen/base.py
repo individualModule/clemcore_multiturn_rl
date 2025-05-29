@@ -80,14 +80,14 @@ class BasePlayPenMultiturnTrajectory(BasePlayPen):
                     info=info.copy() if isinstance(info, dict) else info[:]
                 )
 
-            self.callbacks.update_locals(locals())
-            self.callbacks.on_step()
 
             # Check if the game is done (trajectory completed)
             if game_env.is_done():
                 rollout_buffer.on_done()
                 collected_trajectories += 1  # Increment trajectory count
                 self.num_timesteps += 1
+                self.callbacks.update_locals(locals())
+                self.callbacks.on_step()
                 game_env.reset()
 
         # Notify callbacks that rollout has ended
