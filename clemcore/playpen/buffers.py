@@ -1,6 +1,7 @@
 from typing import List, Dict
 import random
 import warnings
+import pickle
 
 from clemcore.clemgame import Player
 from clemcore.playpen.envs.game_env import GameEnv
@@ -90,6 +91,11 @@ class ReplayBuffer(StepRolloutBuffer):
         excess_count = len(self.trajectories) - self.buffer_size
         if excess_count > 0:
             self.trajectories = self.trajectories[excess_count:]  # Keep only the most recent trajectories
+            self.current_trajectory -= excess_count
+
+        if self.current_trajectory < 0:
+            self.current_trajectory = 0
+
 
     def sample(self, sample_size: int):
         """Randomly sample trajectories from the buffer."""
@@ -104,3 +110,28 @@ class ReplayBuffer(StepRolloutBuffer):
     def sample_trajectories(self):
         """Return a random sample of trajectories."""
         return self.sample(self.sample_size)
+    
+
+    def save_buffer(self, file_path: str, default_name = True):
+        """Save the buffer (trajectories and current trajectory) to a file using pickle."""
+        # Append a default file name to the provided file path
+        if default_name:
+            file_path += "_replay_buffer.pkl"
+        
+        data = {
+            "trajectories": self.trajectories,
+            "current_trajectory": self.current_trajectory
+        }
+
+        with open(file_path, "wb") as f:
+            pickle.dump(data, f)
+        print(f"Buffer saved to {file_path}")
+
+    def load_buffer(self, file_path: str):
+        """Load the buffer (trajectories and current trajectory) from a file."""
+        
+        with open(file_path, "rb") as f:
+            data = pickle.load(f)
+        self.trajectories = data["trajectories"]
+        self.current_trajectory = data["current_trajectory"]
+        print(f"Buffer loaded from {file_path}")
