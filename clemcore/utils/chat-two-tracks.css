@@ -112,3 +112,34 @@ body {background-color: rgb(157, 152, 150);}
     left: 0px;
   }
   
+/* Styles for each game round section */
+.game-round {
+  width: 100vw; /* Full viewport width */
+  padding: 20px;
+  background-color: #f0f8ff; /* light background for content */
+  border-radius: 10px;
+  margin: 10px;
+  max-width: 800px;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+/* Separator styling */
+.separator {
+  width: 100vw; /* Full viewport width */
+  padding: 5px;
+  background-color: #f0f8ff; /* light background for content */
+  border-radius: 0;
+  margin: 10px;
+  max-width: 800px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  color: #c4c3c3;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+}
+
+.separator::after {
+  content: "Round " attr(data-round);;
+}
