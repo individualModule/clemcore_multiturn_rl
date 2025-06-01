@@ -104,8 +104,8 @@ class ReplayBuffer(StepRolloutBuffer):
                 f"Requested sample size ({sample_size}) is larger than the number of stored trajectories "
                 f"({len(self.trajectories)}). Returning all available trajectories."
             )
-            return self.trajectories
-        return random.sample(self.trajectories, sample_size)
+            return self.trajectories[:-1]
+        return random.sample(self.trajectories[:-1], sample_size)
 
     def sample_trajectories(self):
         """Return a random sample of trajectories."""
