@@ -61,7 +61,12 @@ class BasePlayPenMultiturnTrajectory(BasePlayPen):
         rollout_buffer.initial_prompts = game_env.initial_prompts
 
         collected_trajectories = 0
+        retry_counter = 0
+        retry_limit = 10
         while collected_trajectories < rollout_steps:
+            if retry_counter > retry_limit:
+                print('rollout terminated early!')
+                break
             player, context = game_env.observe()
             response = player(context)  # Returns a string - we don't want that
             done, info = game_env.step(response)
@@ -85,6 +90,7 @@ class BasePlayPenMultiturnTrajectory(BasePlayPen):
             if game_env.is_done():
                 # Only collect the trajectory if the game ended on the desired player's turn
                 if forPlayer in player.name:
+                    retry_counter = 0
                     rollout_buffer.on_done()
                     collected_trajectories += 1  # Increment trajectory count
                     self.num_timesteps += 1
@@ -94,6 +100,8 @@ class BasePlayPenMultiturnTrajectory(BasePlayPen):
                     # Skip this trajectory if it ended on the other player's turn
                     rollout_buffer.drop_trajectory()  # Clear the buffer for this trajectory
                     print(f'Game end caused by other player. Dropping trajectory')
+                    retry_counter +=1
+
                 game_env.reset()
 
 
