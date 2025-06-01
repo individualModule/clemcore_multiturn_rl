@@ -83,12 +83,20 @@ class BasePlayPenMultiturnTrajectory(BasePlayPen):
 
             # Check if the game is done (trajectory completed)
             if game_env.is_done():
-                rollout_buffer.on_done()
-                collected_trajectories += 1  # Increment trajectory count
-                self.num_timesteps += 1
-                self.callbacks.update_locals(locals())
-                self.callbacks.on_step()
+                # Only collect the trajectory if the game ended on the desired player's turn
+                if forPlayer in player.name:
+                    rollout_buffer.on_done()
+                    collected_trajectories += 1  # Increment trajectory count
+                    self.num_timesteps += 1
+                    self.callbacks.update_locals(locals())
+                    self.callbacks.on_step()
+                else:
+                    # Skip this trajectory if it ended on the other player's turn
+                    rollout_buffer.drop_trajectory()  # Clear the buffer for this trajectory
+                    print(f'Game end caused by other player. Dropping trajectory')
                 game_env.reset()
+
+
 
         # Notify callbacks that rollout has ended
         self.callbacks.on_rollout_end()
