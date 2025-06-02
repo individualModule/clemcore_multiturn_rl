@@ -3,7 +3,7 @@ import abc
 from clemcore.backends import Model
 from clemcore.clemgame import GameRegistry
 from clemcore.playpen.envs import PlayPenEnv
-from clemcore.playpen.buffers import RolloutBuffer
+from clemcore.playpen.buffers import RolloutBuffer, ReplayBuffer
 from clemcore.playpen.callbacks import CallbackList, BaseCallback
 
 
@@ -55,7 +55,7 @@ class BasePlayPenMultiturnTrajectory(BasePlayPen):
     instead of steps, while maintaining the multiturn logic from BasePlayPenMultiturn.
     """
 
-    def _collect_rollouts(self, game_env: PlayPenEnv, rollout_steps: int, rollout_buffer: RolloutBuffer, forPlayer='Guesser'):
+    def _collect_rollouts(self, game_env: PlayPenEnv, rollout_steps: int, rollout_buffer: ReplayBuffer, forPlayer='Guesser'):
         # Notify callbacks that rollout is starting
         self.callbacks.on_rollout_start(game_env, self.num_timesteps)
         rollout_buffer.initial_prompts = game_env.initial_prompts
@@ -104,8 +104,10 @@ class BasePlayPenMultiturnTrajectory(BasePlayPen):
 
                 game_env.reset()
 
-
-
+        
+        # flatten the trajectories for further sampling.
+        print('Rollout done - flattening trajectories')
+        rollout_buffer.flatten_steps()
         # Notify callbacks that rollout has ended
         self.callbacks.on_rollout_end()
 

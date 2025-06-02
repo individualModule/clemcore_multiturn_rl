@@ -2,6 +2,7 @@ from typing import List, Dict
 import random
 import warnings
 import pickle
+import torch
 
 from clemcore.clemgame import Player
 from clemcore.playpen.envs.game_env import GameEnv
@@ -71,12 +72,9 @@ class BranchingRolloutBuffer(RolloutBuffer):
     def reset(self):
         self.forest = []
 
-
 class ReplayBuffer(StepRolloutBuffer):
-    """Replay buffer with a fixed size that removes the oldest samples when full.
-    
-    ! on step not working as intended -> without resetting, length of self.current_Trajectory becomes > than self.trajectories.
-      Out of range index error.
+    """
+    Replay buffer with a fixed size that removes the oldest samples when full
     """
 
     def __init__(self, game_env: GameEnv, buffer_size: int, sample_size: int):
@@ -86,6 +84,8 @@ class ReplayBuffer(StepRolloutBuffer):
         super().__init__(game_env)
         self.buffer_size = buffer_size
         self.sample_size = sample_size
+        self.steps: List[dict] = [] # flattened steps needed to sample steps.
+
 
     def on_done(self):
         """Add the current trajectory to the buffer and enforce buffer size."""
@@ -114,6 +114,38 @@ class ReplayBuffer(StepRolloutBuffer):
         """Return a random sample of trajectories."""
         return self.sample(self.sample_size)
     
+    def flatten_steps(self):
+        """
+        Flatten trajectories into individual steps.
+        needed to match ArCHer sampling - where random steps are sampled, not trajectories.
+
+        Only do it after rollouts are done - so once per iteration.
+        """
+        self.steps = []
+        for trajectory in self.trajectories:
+            for i in range(len(trajectory)):
+                current = trajectory[i]
+                next_step = trajectory[i + 1] if i + 1 < len(trajectory) else None
+                self.steps.append({
+                    'obs': current['context'],
+                    'action': current['response'],
+                    'reward': torch.tensor(
+                        current['info']['response_score'] if next_step else current['info']['episode_score'],
+                        dtype=torch.float
+                    ),
+                    'next_obs': next_step['context'] if next_step else current['context'],
+                    'done': torch.tensor(current['done'], dtype=torch.bool)
+                })
+
+    def sample_steps(self):
+        """Randomly sample individual steps from the buffer."""
+        if len(self.steps) < self.sample_size:
+            warnings.warn(
+                f"Requested sample size ({self.sample_size}) is larger than the number of stored steps "
+                f"({len(self.steps)}). Returning all available steps."
+            )
+            return self.steps
+        return random.sample(self.steps, self.sample_size)
 
     def save_buffer(self, file_path: str, default_name = True):
         """Save the buffer (trajectories and current trajectory) to a file using pickle."""
