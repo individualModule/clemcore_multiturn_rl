@@ -113,12 +113,11 @@ body {background-color: rgb(157, 152, 150);}
   }
 
 .game-round {
-  width: 100vw; /* Full viewport width */
-  padding: 20px;
+  padding: 20px 0 20px 0;
   background-color: #f0f8ff; /* light background for content */
   position: relative; /* Important to position the badge */
   border-radius: 10px;
-  margin: 10px;
+  margin: 10px 0 10px 0;
   max-width: 800px;
   box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
 }
