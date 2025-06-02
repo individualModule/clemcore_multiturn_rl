@@ -86,8 +86,7 @@ def build_transcript(interactions: Dict):
             f"episode {meta['game_id']} with {meta['dialogue_pair']}."
     transcript += patterns.TOP_INFO.format(title)
     for turn_idx, turn in enumerate(interactions['turns']):
-        transcript += f'<div class="separator" data-round="{turn_idx}"></div>'
-        transcript += '<div class="game-round">'
+        transcript += f'<div class="game-round" data-round="{turn_idx}">'
         for event in turn:
             class_name = _get_class_name(event)
             msg_content = event['action']['content']
