@@ -251,15 +251,16 @@ class DialogueGameMaster(GameMaster):
 
         if self._should_pass_turn():
             self.current_player = self._next_player()
-            if self._start_next_round():
-                self._on_after_round()
-                self.current_round += 1
+
+        if self._start_next_round():
+            self._on_after_round()
+            self.current_round += 1  # already increment here b.c. _does_game_proceed might rely on it
 
         done = not self._does_game_proceed()
         if done:
             self._on_after_game()
             self.info["episode_score"] = self.compute_episode_score()
-        elif self._start_next_round():
+        elif self._start_next_round():  # prepare next round only when game has not ended yet
             self.__prepare_next_round()
 
         info = deepcopy(self.info)
