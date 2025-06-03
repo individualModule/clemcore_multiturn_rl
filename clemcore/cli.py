@@ -307,10 +307,10 @@ def main():
                             required=True, help="A specific game name (see ls), or a GameSpec-like JSON string object.")
     run_parser.add_argument("-t", "--temperature", type=float, default=0.0,
                             help="Argument to specify sampling temperature for the models. Default: 0.0.")
-    run_parser.add_argument("-l", "--max_tokens", type=int, default=100,
+    run_parser.add_argument("-l", "--max_tokens", type=int, default=300,
                             help="Specify the maximum number of tokens to be generated per turn (except for cohere). "
                                  "Be careful with high values which might lead to exceed your API token limits."
-                                 "Default: 100.")
+                                 "Default: 300.")
     run_parser.add_argument("-i", "--instances_name", type=str, default=None,
                             help="The instances file name (.json suffix will be added automatically.")
     run_parser.add_argument("-r", "--results_dir", type=str, default="results",
