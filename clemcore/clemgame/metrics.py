@@ -104,6 +104,8 @@ class GameScorer:
         self.game_instance = game_instance
         """ Stores values of score computation """
         self.scores = {
+            "meta": {},
+            "players": {},
             "turn scores": {},
             "episode scores": {},
         }
@@ -146,6 +148,10 @@ class GameScorer:
             episode_interactions: Dict containing the episode's interactions. This contains the actions recorded during
                 a benchmark run.
         """
+        if "meta" in episode_interactions:  # if given, copy over meta info
+            self.scores["meta"] = episode_interactions["meta"]
+        if "players" in episode_interactions:  # if given, copy over players info
+            self.scores["players"] = episode_interactions["players"]
         self.score_turns(episode_interactions)
         self.score_game(episode_interactions)
 
