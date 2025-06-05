@@ -206,7 +206,90 @@ class HuggingfaceLocalModel(backends.Model):
         log_probs = torch.log(action_probs) * action_tokens['attention_mask']     
 
         return log_probs
+    
+    
+    def generate_action_and_logprobs(self, observations: Union[List[dict], List[List[dict]]]) -> Tuple[List[List[dict]], torch.Tensor]:
+        """
+        Generate policy actions and calculate their log probabilities in a single forward pass.
 
+        Args:
+            observations: A single observation or a batch of observations.
+
+        Returns:
+            Tuple containing:
+                - Generated actions in the format List[List[dict]].
+                - Log probabilities of the generated actions as a torch.Tensor.
+        """
+        # Ensure observations are in batch format
+        if isinstance(observations[0], dict):
+            observations = [observations]  # Wrap single observation in a list
+
+        # Apply chat template and tokenize observations
+        obs_template = self.tokenizer.apply_chat_template(observations, tokenize=False)
+        obs_tokens = self.tokenizer(obs_template, padding=True, truncation=True, return_tensors="pt").to(self.device)
+
+
+        # greedy decoding:
+        do_sample: bool = False
+        if self.get_temperature() > 0.0:
+            do_sample = True
+
+        if do_sample:
+            outputs = self.model.generate(
+                input_ids=obs_tokens['input_ids'],
+                attention_mask=obs_tokens['attention_mask'],
+                max_new_tokens=self.get_max_tokens(),
+                temperature=self.get_temperature(),
+                do_sample=do_sample,
+                return_dict_in_generate=True,
+                output_scores=True
+            )
+        else:
+            # Generate actions using the model
+            outputs = self.model.generate(
+                input_ids=obs_tokens['input_ids'],
+                attention_mask=obs_tokens['attention_mask'],
+                max_new_tokens=self.get_max_tokens(),
+                do_sample=do_sample,
+                return_dict_in_generate=True,
+                output_scores=True
+            )
+
+        # Extract generated token IDs and calculate log probabilities
+        generated_ids = outputs.sequences[:, obs_tokens['input_ids'].size(1):]
+        logits = torch.stack(outputs.scores, dim=1)  # Shape: [batch_size, seq_len, vocab_size]
+        probs = self.softmax(logits)
+        log_probs = torch.log(probs)
+
+        # Gather log probabilities for the generated tokens
+        action_log_probs = torch.gather(
+            log_probs,
+            2,
+            generated_ids.unsqueeze(-1)
+        ).squeeze(-1)
+
+        # Mask log probabilities with attention mask
+        action_mask = (generated_ids != self.tokenizer.pad_token_id).float()
+        action_log_probs = action_log_probs * action_mask
+
+        # Decode generated actions into text
+        generated_texts = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
+        actions = [[{"role": "assistant", "content": text}] for text in generated_texts]
+
+        # --- Sanity Check ---
+        assert len(actions) == len(observations), "Mismatch between number of actions and observations."
+        assert action_log_probs.size(0) == len(observations), "Log probabilities batch size mismatch."
+        assert torch.isfinite(action_log_probs).all(), "Log probabilities contain NaN or Inf values."
+        assert all(isinstance(action[0]["content"], str) and action[0]["content"] for action in actions), \
+            "Generated actions are not valid strings."
+        
+        for i, (action, logprob) in enumerate(zip(actions, action_log_probs)):
+            print(f"Observation {i + 1}:")
+            print(f"Generated Action: {action[0]['content']}")
+            print(f"Log Probabilities for Each Token: {logprob.tolist()}")
+
+        return actions, action_log_probs
+    
     def generate_response(self, messages: List[Dict],
                           return_full_text: bool = False,
                           log_messages: bool = False) -> Tuple[Any, Any, str]:
