@@ -161,6 +161,7 @@ class HuggingfaceLocalModel(backends.Model):
         
         """Calculate log probabilities for observation-action pairs.
         
+        !!! Probably does not work well !!!
         Args:
             observation: Single observation or batch of observations
             action: Single action or batch of actions
@@ -210,8 +211,10 @@ class HuggingfaceLocalModel(backends.Model):
     
     def generate_action_and_logprobs(self, observations: Union[List[dict], List[List[dict]]]) -> Tuple[List[List[dict]], torch.Tensor]:
         """
-        Generate policy actions and calculate their log probabilities in a single forward pass.
+        https://huggingface.co/blog/the_n_implementation_details_of_rlhf_with_ppo
 
+        Generate policy actions and calculate their log probabilities in a single forward pass.
+        Mask out special tokens so that it doesn't interfere with the gradient.
         Args:
             observations: A single observation or a batch of observations.
 
@@ -220,16 +223,24 @@ class HuggingfaceLocalModel(backends.Model):
                 - Generated actions in the format List[List[dict]].
                 - Log probabilities of the generated actions as a torch.Tensor.
         """
+
+        # Define the tokens to mask out
+        special_tokens = [
+            self.tokenizer.pad_token_id,  # Padding token
+            128006,  # start_header_id
+            128007,  # end_header_id
+            128009   # eot_id
+        ]
+
         # Ensure observations are in batch format
         if isinstance(observations[0], dict):
             observations = [observations]  # Wrap single observation in a list
 
         # Apply chat template and tokenize observations
-        obs_template = self.tokenizer.apply_chat_template(observations, tokenize=False)
+        obs_template = self.tokenizer.apply_chat_template(observations, add_generation_prompt=True, tokenize=False)
         obs_tokens = self.tokenizer(obs_template, padding=True, truncation=True, return_tensors="pt").to(self.device)
 
-
-        # greedy decoding:
+        # Greedy decoding or sampling
         do_sample: bool = False
         if self.get_temperature() > 0.0:
             do_sample = True
@@ -242,24 +253,25 @@ class HuggingfaceLocalModel(backends.Model):
                 temperature=self.get_temperature(),
                 do_sample=do_sample,
                 return_dict_in_generate=True,
-                output_scores=True
+                output_logits=True
             )
         else:
-            # Generate actions using the model
             outputs = self.model.generate(
                 input_ids=obs_tokens['input_ids'],
                 attention_mask=obs_tokens['attention_mask'],
                 max_new_tokens=self.get_max_tokens(),
                 do_sample=do_sample,
                 return_dict_in_generate=True,
-                output_scores=True
+                output_logits=True
             )
 
-        # Extract generated token IDs and calculate log probabilities
+        # Extract generated token IDs
         generated_ids = outputs.sequences[:, obs_tokens['input_ids'].size(1):]
-        logits = torch.stack(outputs.scores, dim=1)  # Shape: [batch_size, seq_len, vocab_size]
-        probs = self.softmax(logits)
-        log_probs = torch.log(probs)
+
+        # Calculate logits and apply softmax
+        logits = torch.stack(outputs.logits, dim=1)  # Shape: [batch_size, seq_len, vocab_size]
+        probs = self.softmax(logits)  # Apply softmax to convert logits to probabilities
+        log_probs = torch.log(probs)  # Convert probabilities to log probabilities
 
         # Gather log probabilities for the generated tokens
         action_log_probs = torch.gather(
@@ -268,27 +280,47 @@ class HuggingfaceLocalModel(backends.Model):
             generated_ids.unsqueeze(-1)
         ).squeeze(-1)
 
-        # Mask log probabilities with attention mask
-        action_mask = (generated_ids != self.tokenizer.pad_token_id).float()
-        action_log_probs = action_log_probs * action_mask
+        # Mask out special tokens
+        non_special_mask = torch.ones_like(generated_ids, dtype=torch.bool)
+        for token_id in special_tokens:
+            non_special_mask &= (generated_ids != token_id)
+
+        # Apply the mask to exclude special tokens from log probabilities
+        action_log_probs = action_log_probs * non_special_mask.float()
 
         # Decode generated actions into text
         generated_texts = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
-        actions = [[{"role": "assistant", "content": text}] for text in generated_texts]
+
+        # Process the generated text and log probabilities
+        actions = []
+        filtered_log_probs = []
+        for i, (text, generated_id_seq, log_prob_seq) in enumerate(zip(generated_texts, generated_ids, action_log_probs)):
+            # Remove special tokens from the generated text
+            prompt_text = self.tokenizer.decode(obs_tokens['input_ids'][i], skip_special_tokens=True).strip()
+            response_text = text.replace(prompt_text, '').strip()
+            print(response_text)
+            if 'output_split_prefix' in self.model_spec.model_config:
+                response_text = response_text.rsplit(self.model_spec['model_config']['output_split_prefix'], maxsplit=1)[1]
+            eos_to_cull = self.model_spec['model_config']['eos_to_cull']
+            response_text = re.sub(eos_to_cull, "", response_text)
+
+            # Filter out log probabilities corresponding to special tokens
+            valid_indices = non_special_mask[i].nonzero(as_tuple=True)[0]
+            filtered_probs = log_prob_seq[valid_indices]
+            actions.append([{"role": "assistant", "content": response_text}])
+            filtered_log_probs.append(filtered_probs)
+
+        # Pad filtered log probabilities to ensure consistent tensor shape
+        filtered_log_probs = torch.nn.utils.rnn.pad_sequence(filtered_log_probs, batch_first=True, padding_value=0.0)
 
         # --- Sanity Check ---
         assert len(actions) == len(observations), "Mismatch between number of actions and observations."
-        assert action_log_probs.size(0) == len(observations), "Log probabilities batch size mismatch."
-        assert torch.isfinite(action_log_probs).all(), "Log probabilities contain NaN or Inf values."
+        assert filtered_log_probs.size(0) == len(observations), "Log probabilities batch size mismatch."
+        assert torch.isfinite(filtered_log_probs).all(), "Log probabilities contain NaN or Inf values."
         assert all(isinstance(action[0]["content"], str) and action[0]["content"] for action in actions), \
             "Generated actions are not valid strings."
-        
-        for i, (action, logprob) in enumerate(zip(actions, action_log_probs)):
-            print(f"Observation {i + 1}:")
-            print(f"Generated Action: {action[0]['content']}")
-            print(f"Log Probabilities for Each Token: {logprob.tolist()}")
 
-        return actions, action_log_probs
+        return actions, filtered_log_probs
     
     def generate_response(self, messages: List[Dict],
                           return_full_text: bool = False,
