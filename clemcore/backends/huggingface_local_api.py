@@ -172,6 +172,9 @@ class HuggingfaceLocalModel(backends.Model):
         Double forward pass to obtain logprobs: 
         1 - generate() to get completions
         2 - forward pass to get logprobs
+
+
+        The padded tokens (based on completion mask) are assigned logprob 0 so they don't impact the loss
         """    
 
         # Get the number of tokens to truncate from prompt - 
@@ -193,7 +196,10 @@ class HuggingfaceLocalModel(backends.Model):
 
         # Take the completion tokens log probabilities
         logprobs = torch.take_along_dim(logits.log_softmax(dim=-1), completion_ids.unsqueeze(-1), dim=2).squeeze(-1)
-        
+        # Mask out the padding tokens
+        padding_mask = ~completion_mask.bool()
+        logprobs = logprobs * ~padding_mask  # Set logprobs for padding tokens to 0
+
         return logprobs
 
 
