@@ -1,11 +1,15 @@
 """Backend using HuggingFace transformers models.
 Uses HF tokenizers instruct/chat templates for proper input format per model.
 """
+from dataclasses import dataclass
+from undecorated import undecorated
+from types import MethodType
+
 import logging
 from typing import List, Dict, Tuple, Any, Union
 import torch
 import re
-from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig
+from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig, StaticCache
 from jinja2 import TemplateError
 
 import clemcore.backends as backends
@@ -15,6 +19,11 @@ logger = logging.getLogger(__name__)
 
 FALLBACK_CONTEXT_SIZE = 256
 
+@dataclass
+class GenerationOutputs:
+    """Class to mimic the output structure of HuggingFace's generate() function."""
+    sequences: torch.Tensor
+    logits: list = None
 
 def load_config_and_tokenizer(model_spec: backends.ModelSpec) -> Tuple[AutoTokenizer, AutoConfig, int]:
     """Load a HuggingFace model's standard config and tokenizer, and get context token limit from config.
@@ -156,59 +165,39 @@ class HuggingfaceLocalModel(backends.Model):
 
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         
-    def calculate_logprobs(self, observation: Union[List[dict], List[List[dict]]],
-                                 action: Union[List[dict], List[List[dict]]]) -> torch.Tensor:
-        
-        """Calculate log probabilities for observation-action pairs.
-        
-        !!! Probably does not work well !!!
-        Args:
-            observation: Single observation or batch of observations
-            action: Single action or batch of actions
-            
-        Returns:
-            Tensor containing log probabilities for each sequence
+
+    def calculate_logprobs(self, prompt_ids, prompt_mask, completion_ids, completion_mask):
         """
+        Inspired by the _forward class in TRL online DPO trainer. 
+        Double forward pass to obtain logprobs: 
+        1 - generate() to get completions
+        2 - forward pass to get logprobs
+        """    
 
-        # assert that both entries are the same format
-        # if isinstance(observation[0], list):
-        #     # if the item inside observation is a list - we are dealing with batches. 
-        assert len(observation) == len(action), "Observation and action batches must have same length"
-        #     assert isinstance(action[0], list)
+        # Get the number of tokens to truncate from prompt - 
+        num_tokens_to_truncate = max(prompt_ids.size(1) + completion_ids.size(1) - self.context_size, 0)
 
-        # do we need padding? 
-        obs_template = self.tokenizer.apply_chat_template(observation, tokenize=False)
-        action_template = self.tokenizer.apply_chat_template(action, tokenize=False)
+        # Truncate left to avoid OOM
+        prompt_ids = prompt_ids[:, num_tokens_to_truncate:]
+        prompt_mask = prompt_mask[:, num_tokens_to_truncate:]
 
-        obs_tokens = self.tokenizer(obs_template, padding=True, truncation=True, return_tensors="pt").to(self.device)
-        action_tokens = self.tokenizer(action_template, padding=True, truncation=True, return_tensors="pt").to(self.device)
+        # Concatenate the prompt and completion
+        prompt_completion_ids = torch.cat((prompt_ids, completion_ids), dim=1)
+        prompt_completion_mask = torch.cat((prompt_mask, completion_mask), dim=1)
 
+        # Forward pass through the model
+        output = self.model(prompt_completion_ids, attention_mask=prompt_completion_mask)
 
-        # Get the full sequence by concatenating
-        full_input_ids = torch.cat([obs_tokens['input_ids'], action_tokens['input_ids']], dim=1)
-        attention_mask = torch.cat([obs_tokens['attention_mask'], action_tokens['attention_mask']], dim=1)
+        # There is 1 offset because the model predicts the next token
+        logits = output.logits[:, prompt_ids.size(1) - 1 : -1]
 
-        # Get model outputs
-        outputs = self.model(input_ids=full_input_ids, attention_mask=attention_mask)
+        # Take the completion tokens log probabilities
+        logprobs = torch.take_along_dim(logits.log_softmax(dim=-1), completion_ids.unsqueeze(-1), dim=2).squeeze(-1)
         
-        # Calculate probabilities
-        logits = outputs.logits
-        probs = self.softmax(logits)
-        
-        # Get probabilities of the actual tokens that were generated
-        # We look at the logits for positions corresponding to the action tokens
-        action_probs = torch.gather(
-            probs[:, obs_tokens['input_ids'].size(1)-1:-1], 
-            2,
-            action_tokens['input_ids'].unsqueeze(2)
-        ).squeeze(2)
-        
-        # Calculate log probabilities and mask
-        log_probs = torch.log(action_probs) * action_tokens['attention_mask']     
+        return logprobs
 
-        return log_probs
-    
-    
+
+
     def generate_action_and_logprobs(self,
                                     observations: Union[List[dict], List[List[dict]]],
                                     return_logprobs = True
@@ -226,15 +215,9 @@ class HuggingfaceLocalModel(backends.Model):
                 - Generated actions in the format List[List[dict]].
                 - Log probabilities of the generated actions as a torch.Tensor.
         """
-
-        # Define the tokens to mask out
-        special_tokens = [
-            self.tokenizer.pad_token_id,  # Padding token
-            128006,  # start_header_id
-            128007,  # end_header_id
-            128009   # eot_id
-        ]
-
+        eos_token_id = self.tokenizer.eos_token_id
+        pad_token_id = self.tokenizer.pad_token_id
+        
         # Ensure observations are in batch format
         if isinstance(observations[0], dict):
             observations = [observations]  # Wrap single observation in a list
@@ -248,8 +231,6 @@ class HuggingfaceLocalModel(backends.Model):
         if self.get_temperature() > 0.0:
             do_sample = True
 
-
-        # Only request logits when log probabilities are needed
         generate_kwargs = {
             "input_ids": obs_tokens['input_ids'],
             "attention_mask": obs_tokens['attention_mask'],
@@ -257,47 +238,26 @@ class HuggingfaceLocalModel(backends.Model):
             "do_sample": do_sample,
             "return_dict_in_generate": True
         }
+
         if do_sample:
             generate_kwargs["temperature"] = self.get_temperature()
 
-        if return_logprobs:
-            generate_kwargs["output_logits"] = True
-
-
-        outputs = self.model.generate(**generate_kwargs)
-
+        outputs = self.model.generate(**generate_kwargs) # custom generation fn to get logprobs
         # Extract generated token IDs
-        generated_ids = outputs.sequences[:, obs_tokens['input_ids'].size(1):]
-
+        completion_ids = outputs.sequences[:, obs_tokens['input_ids'].size(1):]
+        completion_ids, completion_mask = truncate_right(completion_ids, eos_token_id, pad_token_id)
+        generated_texts = self.tokenizer.batch_decode(outputs.sequences[:,:], skip_special_tokens=True)
+       
+        logprobs = None
         if return_logprobs:
-            # Calculate logits and apply softmax
-            logits = torch.stack(outputs.logits, dim=1)  # Shape: [batch_size, seq_len, vocab_size]
-            probs = self.softmax(logits)  # Apply softmax to convert logits to probabilities
-            log_probs = torch.log(probs)  # Convert probabilities to log probabilities
-
-            # Gather log probabilities for the generated tokens
-            action_log_probs = torch.gather(
-                log_probs,
-                2,
-                generated_ids.unsqueeze(-1)
-            ).squeeze(-1)
-
-            # Mask out special tokens
-            non_special_mask = torch.ones_like(generated_ids, dtype=torch.bool)
-            for token_id in special_tokens:
-                non_special_mask &= (generated_ids != token_id)
-
-            # Apply the mask to exclude special tokens from log probabilities
-            action_log_probs = action_log_probs * non_special_mask.float()
-
-        # Decode generated actions into text
-        generated_texts = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
-
-        # Process the generated text and log probabilities
+            logprobs = self.calculate_logprobs(obs_tokens['input_ids'],
+                                            obs_tokens['attention_mask'],
+                                            completion_ids,
+                                            completion_mask)
+            
         actions = []
-        filtered_log_probs = []
 
-        for i, (text, generated_id_seq) in enumerate(zip(generated_texts, generated_ids)):
+        for i, (text, generated_id_seq) in enumerate(zip(generated_texts, completion_ids)):
             # Remove special tokens from the generated text
             prompt_text = self.tokenizer.decode(obs_tokens['input_ids'][i], skip_special_tokens=True).strip()
             response_text = text.replace(prompt_text, '').strip()
@@ -310,27 +270,19 @@ class HuggingfaceLocalModel(backends.Model):
 
             actions.append([{"role": "assistant", "content": response_text}])
 
-            if return_logprobs:
-                # Filter out log probabilities corresponding to special tokens
-                valid_indices = non_special_mask[i].nonzero(as_tuple=True)[0]
-                filtered_probs = action_log_probs[i][valid_indices]
-                filtered_log_probs.append(filtered_probs)
 
         # Pad filtered log probabilities to ensure consistent tensor shape
         if return_logprobs:
-            filtered_log_probs = torch.nn.utils.rnn.pad_sequence(filtered_log_probs, batch_first=True, padding_value=0.0)
-            assert filtered_log_probs.size(0) == len(observations), "Log probabilities batch size mismatch."
-            assert torch.isfinite(filtered_log_probs).all(), "Log probabilities contain NaN or Inf values."
-
-        else:
-            filtered_log_probs = None
+            assert logprobs.size(0) == len(observations), "Log probabilities batch size mismatch."
+            assert torch.isfinite(logprobs).all(), "Log probabilities contain NaN or Inf values."
             
         # --- Sanity Check ---
         assert len(actions) == len(observations), "Mismatch between number of actions and observations."
         assert all(isinstance(action[0]["content"], str) and action[0]["content"] for action in actions), \
             "Generated actions are not valid strings."
 
-        return actions, filtered_log_probs
+        return actions, logprobs
+
     
     def generate_response(self, messages: List[Dict],
                           return_full_text: bool = False,
@@ -569,3 +521,62 @@ def check_context_limit(messages: List[Dict], model_spec: backends.ModelSpec,
         print(f"{tokens_used} input tokens, {tokens_left} tokens of {context_size} left.")
     fits = context_check_tuple[0]
     return fits, tokens_used, tokens_left, context_size
+
+
+
+def truncate_right(
+    input_ids: torch.Tensor, stop_token_id: int, pad_token_id: int
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Truncates the input tensor from the right side after the first occurrence of the stop token.
+
+    Args:
+        input_ids (`torch.Tensor`):
+            The tensor containing the responses to be truncated
+        stop_token_id (`int`):
+            The token ID representing the stop token where truncation occurs
+        pad_token_id (`int`):
+            The token ID representing the pad token used to fill the truncated responses
+
+    Returns:
+        tuple:
+            - `output_ids` (`torch.Tensor`):
+                The truncated responses tensor with pad tokens filled after the stop token
+            - `mask` (`torch.Tensor`):
+                The mask tensor to indicate the padding tokens
+    """
+    if isinstance(input_ids, torch.Tensor):
+        print("input_ids is a tensor.")
+    else:
+        print("input_ids is not a tensor.")
+
+    trunc_idxs = first_true_indices(input_ids == stop_token_id).unsqueeze(-1)
+    new_size = [1] * (len(input_ids.size()) - 1) + [input_ids.shape[1]]
+    idxs = torch.arange(input_ids.shape[1], device=input_ids.device).view(*new_size)
+    output_ids = torch.masked_fill(input_ids, idxs > trunc_idxs, pad_token_id)
+    mask = torch.masked_fill(torch.ones_like(input_ids), idxs > trunc_idxs, 0)
+
+    return output_ids, mask
+
+def first_true_indices(bools: torch.Tensor, dtype=torch.long):
+    """
+    Takes an N-dimensional bool tensor and returns an (N-1)-dimensional tensor of integers giving
+    the position of the first True in each "row".
+
+    Returns the length of the rows (bools.size(-1)) if no element is True in a given row.
+
+    Args:
+        bools (`torch.Tensor`):
+            An N-dimensional boolean tensor.
+        dtype (`torch.dtype`, optional):
+            The desired data type of the output tensor. Defaults to `torch.long`.
+
+    Returns:
+        `torch.Tensor`:
+            An (N-1)-dimensional tensor of integers indicating the position of the first True
+            in each row. If no True value is found in a row, returns the length of the row.
+    """
+    row_len = bools.size(-1)
+    zero_or_index = row_len * (~bools).type(dtype) + torch.arange(row_len, dtype=dtype, device=bools.device)
+    return torch.min(zero_or_index, dim=-1).values
+
