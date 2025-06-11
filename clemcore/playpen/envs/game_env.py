@@ -88,3 +88,86 @@ class GameEnv(PlayPenEnv):
             store_file(self._game_instance, f"instance.json", episode_path)
         store_file(self.master.game_recorder.interactions, f"interactions.json", episode_path)
         store_file(self.master.game_recorder.requests, f"requests.json", episode_path)
+
+class BatchEnv(PlayPenEnv):
+
+    def __init__(self, game: GameBenchmark, player_models: List[Model], task_iterator: GameInstanceIterator,
+                 reset=True, batch_size=1):
+        super().__init__()
+        self._game = game
+        self._game_name = game.game_name
+        self._player_models = player_models
+        self._dialogue_pair_descriptor = game.get_dialogue_pair_descriptor(player_models)
+        self._task_iterator = task_iterator
+        self.batch_size = batch_size
+
+        if len(self._task_iterator) < 1:
+            raise RuntimeError(f"No game instances given for the game: '{self._game_name}'")
+
+        self.envs = self.generate_envs()
+        self.active_envs = set(range(self.batch_size))  # Track active environments
+
+    def generate_envs(self):
+        """
+        Generate `batch_size` GameEnvs that will roll out in parallel.
+        """
+        envs = {}
+        for i in range(self.batch_size):
+            envs[i] = {
+                'done': False,
+                'env': GameEnv(self._game, self._player_models, self._task_iterator)
+            }
+        return envs
+
+    def observe(self):
+        """
+        Collect observations from all active environments.
+        Returns a dictionary with environment IDs as keys.
+        """
+        obs_dict = {}
+        for key in self.active_envs:
+            env_data = self.envs[key]
+            if not env_data['done']:
+                player, context = env_data['env'].observe()
+                obs_dict[key] = {"player": player, "context": context}
+        return obs_dict
+
+    def step(self, responses: Dict[int, Union[str, List]]):
+        """
+        Apply a batch of responses to the corresponding environments.
+        Args:
+            responses: A dictionary where keys are environment IDs and values are responses.
+        Returns:
+            A dictionary with environment IDs as keys and step results (`done`, `info`) as values.
+        """
+        info_dict = {}
+        for key, response in responses.items():
+            env_data = self.envs[key]
+            if not env_data['done']:
+                done, info = env_data['env'].step(response)
+                env_data['done'] = done
+                info_dict[key] = {"done": done, "info": info}
+
+                # Reset the environment if it is done
+                if done:
+                    self.env_reset(key)
+
+        # Update active environments
+        self.active_envs = {key for key, env_data in self.envs.items() if not env_data['done']}
+        return info_dict
+
+    def env_reset(self, env_id: int):
+        """
+        Reset a specific environment by its ID.
+        """
+        if env_id in self.envs:
+            self.envs[env_id]['env'].reset()
+            self.envs[env_id]['done'] = False
+            self.active_envs.add(env_id)  # Add back to active environments
+
+    def reset_batch(self):
+        """
+        Reset all environments in the batch.
+        """
+        self.envs = self.generate_envs()
+        self.active_envs = set(range(self.batch_size))  # Reset active environments

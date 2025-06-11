@@ -49,6 +49,95 @@ class BasePlayPen(abc.ABC):
     def learn_interactive(self, game_registry: GameRegistry):
         pass
 
+class BatchRollout:
+
+    def __init__(self, model: Model, callbacks: CallbackList = None):
+        """
+        Initialize the BatchRollout class.
+
+        Args:
+            model: The model used for inference.
+            callbacks: A list of callbacks to track rollout progress.
+        """
+        self.model = model
+        self.callbacks = callbacks or CallbackList()
+
+    @torch.no_grad()
+    def _collect_rollouts(self, game_env: BatchEnv, rollout_steps: int, rollout_buffer: RolloutBuffer, for_player: str, eval=False):
+        """
+        Collect rollouts using the BatchEnv, focusing on the target player.
+
+        Args:
+            game_env: The BatchEnv instance managing multiple GameEnv instances.
+            rollout_steps: The number of rollout steps to collect.
+            rollout_buffer: The buffer to store collected trajectories.
+            for_player: The name of the target player to collect rollouts for.
+            eval: Whether this is an evaluation rollout (no buffer flattening).
+        """
+        self.callbacks.on_rollout_start(game_env, rollout_steps)
+
+        collected_trajectories = 0
+
+        while collected_trajectories < rollout_steps:
+            # Collect observations from all active environments
+            observations = game_env.observe()
+
+            # Prepare batch inputs for the model
+            batch_inputs = [obs["context"] for obs in observations.values()]
+            batch_players = [obs["player"] for obs in observations.values()]
+
+            # Perform inference using the model
+            batch_responses = self.model(batch_inputs)
+
+            # Update players with the generated responses
+            for env_id, response in zip(observations.keys(), batch_responses):
+                player = observations[env_id]["player"]
+                context = observations[env_id]["context"]
+                player.update_context_and_response(context, response)
+
+            # Map responses back to environment IDs
+            responses = {env_id: response[2] for env_id, response in zip(observations.keys(), batch_responses)}
+
+            # Step through the environments with the responses
+            step_results = game_env.step(responses)
+
+            # Process step results
+            for env_id, result in step_results.items():
+                done = result["done"]
+                info = result["info"]
+                player = observations[env_id]["player"]
+
+                # Add step to the rollout buffer only for the target player
+                if for_player in player.name:
+                    full_context = player.get_context()[:-1]  # Retrieve full context excluding the last response
+                    response_dict = player.get_context()[-1:]  # Get the last response as a list
+                    rollout_buffer.on_step(
+                        context=full_context.copy() if isinstance(full_context, dict) else full_context[:],
+                        response=response_dict.copy(),
+                        done=done,
+                        info=info.copy() if isinstance(info, dict) else info[:]
+                    )
+
+                # If the environment is done, finalize the trajectory and reset
+                if done:
+                    if for_player in player.name:
+                        rollout_buffer.on_done()
+                        collected_trajectories += 1
+                    else:
+                        # Drop the trajectory if it ended on the other player's turn
+                        rollout_buffer.drop_trajectory()
+
+                    # Reset the environment
+                    game_env.env_reset(env_id)
+
+            self.callbacks.update_locals(locals())
+            self.callbacks.on_step()
+
+        if not eval:
+            # Flatten trajectories for further sampling
+            rollout_buffer.flatten_steps()
+
+        self.callbacks.on_rollout_end()
 
 class BasePlayPenMultiturnTrajectory(BasePlayPen):
     """
