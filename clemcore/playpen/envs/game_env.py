@@ -19,7 +19,11 @@ class GameEnv(PlayPenEnv):
         self._dialogue_pair_descriptor = game.get_dialogue_pair_descriptor(player_models)
         self._task_iterator = task_iterator
         if len(self._task_iterator) < 1:
-            raise RuntimeError(f"No game instances given for the game: '{self._game_name}'")
+            try:
+                print('this happened')
+                self._task_iterator.reset()
+            except:
+                raise RuntimeError(f"No game instances given for the game: '{self._game_name}'")
         # variables initialized on reset()
         self._game_instance: Dict = None
         self._experiment: Dict = None
@@ -92,7 +96,7 @@ class GameEnv(PlayPenEnv):
 class BatchEnv(PlayPenEnv):
 
     def __init__(self, game: GameBenchmark, player_models: List[Model], task_iterator: GameInstanceIterator,
-                 reset=True, batch_size=1):
+                 reset=True, batch_size=4):
         super().__init__()
         self._game = game
         self._game_name = game.game_name
@@ -113,10 +117,7 @@ class BatchEnv(PlayPenEnv):
         """
         envs = {}
         for i in range(self.batch_size):
-            envs[i] = {
-                'done': False,
-                'env': GameEnv(self._game, self._player_models, self._task_iterator)
-            }
+            envs[i] = GameEnv(self._game, self._player_models, self._task_iterator)
         return envs
 
     def observe(self):
@@ -126,10 +127,9 @@ class BatchEnv(PlayPenEnv):
         """
         obs_dict = {}
         for key in self.active_envs:
-            env_data = self.envs[key]
-            if not env_data['done']:
-                player, context = env_data['env'].observe()
-                obs_dict[key] = {"player": player, "context": context}
+            env = self.envs[key]
+            player, context = env.observe()
+            obs_dict[key] = {"player": player, "context": context}
         return obs_dict
 
     def step(self, responses: Dict[int, Union[str, List]]):
@@ -142,18 +142,14 @@ class BatchEnv(PlayPenEnv):
         """
         info_dict = {}
         for key, response in responses.items():
-            env_data = self.envs[key]
-            if not env_data['done']:
-                done, info = env_data['env'].step(response)
-                env_data['done'] = done
-                info_dict[key] = {"done": done, "info": info}
+            env = self.envs[key]
+            done, info = env.step(response)
+            info_dict[key] = {"done": done, "info": info}
 
-                # Reset the environment if it is done
-                if done:
-                    self.env_reset(key)
+            # Reset the environment if it is done
+            if done:
+                self.env_reset(key)
 
-        # Update active environments
-        self.active_envs = {key for key, env_data in self.envs.items() if not env_data['done']}
         return info_dict
 
     def env_reset(self, env_id: int):
@@ -161,9 +157,7 @@ class BatchEnv(PlayPenEnv):
         Reset a specific environment by its ID.
         """
         if env_id in self.envs:
-            self.envs[env_id]['env'].reset()
-            self.envs[env_id]['done'] = False
-            self.active_envs.add(env_id)  # Add back to active environments
+            self.envs[env_id].reset()
 
     def reset_batch(self):
         """
@@ -171,3 +165,25 @@ class BatchEnv(PlayPenEnv):
         """
         self.envs = self.generate_envs()
         self.active_envs = set(range(self.batch_size))  # Reset active environments
+
+
+    def reset(self):
+        pass
+    
+    def store_records(self, top_dir: str, rollout_dir: str, episode_dir: str,
+                  store_experiment: bool = False, store_instance: bool = False):
+        
+        experiment_dir = f"{self.experiment['index']}_{self.experiment['name']}"
+        experiment_path = os.path.join(top_dir,
+                                    self._dialogue_pair_descriptor,
+                                    rollout_dir,
+                                    self._game_name,
+                                    experiment_dir)
+        episode_path = os.path.join(experiment_path, episode_dir)
+        if store_experiment:
+            store_file(self.experiment, f"experiment_{self.experiment['name']}.json", experiment_path)
+        if store_instance:
+            store_file(self._game_instance, f"instance.json", episode_path)
+        store_file(self.master.game_recorder.interactions, f"interactions.json", episode_path)
+        store_file(self.master.game_recorder.requests, f"requests.json", episode_path)
+

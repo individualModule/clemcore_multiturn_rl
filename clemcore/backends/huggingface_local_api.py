@@ -305,6 +305,7 @@ class HuggingfaceLocalModel(backends.Model):
                 - The generated response text.
         """
         # Ensure batch_messages is a list of lists
+        # print(f"Input batch_messages: {batch_messages}")
         assert isinstance(batch_messages, list) and all(isinstance(messages, list) for messages in batch_messages), \
             "batch_messages must be a list of message histories (lists of dictionaries)."
 
@@ -373,6 +374,9 @@ class HuggingfaceLocalModel(backends.Model):
             # Log the response if requested
             if log_messages:
                 logger.info(f"Response for batch {i}: {response_text}")
+        # print("Output batch_responses (response_text only):")
+        # for response in batch_responses:
+        #     print(response[2])  # Print only the response_text
 
         return batch_responses
 
