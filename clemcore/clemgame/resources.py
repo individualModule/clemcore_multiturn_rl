@@ -33,12 +33,19 @@ def store_file(data, file_name: str, dir_path: Union[str, Path], sub_dir: str = 
         if os.path.exists(fp):
             raise FileExistsError(fp)
 
+    if file_name.endswith(".json"):
+        return store_json(data, file_name, dir_path)
+
     with open(fp, "w", encoding='utf-8') as f:
-        if file_name.endswith(".json"):
-            json.dump(data, f, ensure_ascii=False)
-        else:
-            f.write(data)
+        f.write(data)
     return fp
+
+
+def store_json(data, file_name: str, dir_path: Union[Path, str], *, ensure_ascii: bool = False, indent: int = 2):
+    file_path = os.path.join(dir_path, file_name)
+    with open(file_path, "w", encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=ensure_ascii, indent=indent)
+    return file_path
 
 
 def load_json(file_path: str) -> Dict:
@@ -208,7 +215,7 @@ class GameResourceLocator(abc.ABC):
         """
         return self.__load_game_file(file_name, file_ending=file_ending)
 
-    def store_file(self, data, file_name: str, sub_dir: str = None):
+    def store_file(self, data, file_name: str, sub_dir: str = None) -> str:
         """Store a file in your game directory.
         Args:
             data: The data to store in the file.
@@ -218,3 +225,4 @@ class GameResourceLocator(abc.ABC):
         """
         fp = store_file(data, file_name, self.game_path, sub_dir=sub_dir)
         module_logger.info("Game file stored to %s", fp)
+        return fp

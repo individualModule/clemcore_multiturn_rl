@@ -81,7 +81,7 @@ class GameInstanceGenerator(GameResourceLocator):
         pass
 
     @final
-    def generate(self, filename="instances.json", seed=None, **kwargs):
+    def generate(self, filename="instances.json", seed=None, **kwargs) -> str:
         """Generate the game benchmark and store the instances JSON file.
         Intended to not be modified by inheriting classes, modify on_generate instead.
         Args:
@@ -93,4 +93,5 @@ class GameInstanceGenerator(GameResourceLocator):
         random.seed(seed)
         np.random.seed(seed)
         self.on_generate(seed, **kwargs)
-        self.store_file(self.instances, filename, sub_dir="in")
+        file_path = self.store_file(self.instances, filename, sub_dir="in")
+        return file_path
