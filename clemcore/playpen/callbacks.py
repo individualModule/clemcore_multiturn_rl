@@ -78,9 +78,9 @@ class CallbackList(BaseCallback):
         for callback in self.callbacks:
             callback.on_training_end()
 
-    def on_step(self):
+    def on_step(self, env_in_batch = None):
         for callback in self.callbacks:
-            callback.on_step()
+            callback.on_step(env_in_batch)
 
     def update_locals(self, locals_: Dict[str, Any]) -> None:
         for callback in self.callbacks:
@@ -112,14 +112,20 @@ class GameRecordCallback(BaseCallback):
         self.episode_start_step = 0
         self.episode_idx = num_timesteps
 
-    def on_step(self):
+    def on_step(self, env_in_batch = None):
+        # if env is passed as a argument, we call that environments store_records
         # Note: We always store the full episode records, but in the playpen user
         # might choose specific player trajectories via the rollout buffers
         self.num_rollout_steps += 1
-        if self.is_done():
+
+        env = env_in_batch if env_in_batch else self.game_env
+
+        if env.is_done():
             rollout_dir = f"rollout{self.rollout_idx:04d}"
             episode_dir = f"episode_{self.episode_idx}"
-            self.game_env.store_records(self.top_dir, rollout_dir, episode_dir,
+
+                
+            env.store_records(self.top_dir, rollout_dir, episode_dir,
                                         self.store_experiment, self.store_instance)
             self.episode_idx += (self.num_rollout_steps - self.episode_start_step)
             self.episode_start_step = self.num_rollout_steps
@@ -139,5 +145,5 @@ class RolloutProgressCallback(BaseCallback):
         self.progress_bar.refresh()
         self.progress_bar.close()
 
-    def on_step(self):
+    def on_step(self,env_in_batch):
         self.progress_bar.update(1)

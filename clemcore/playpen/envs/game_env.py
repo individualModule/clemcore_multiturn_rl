@@ -20,7 +20,6 @@ class GameEnv(PlayPenEnv):
         self._task_iterator = task_iterator
         if len(self._task_iterator) < 1:
             try:
-                print('this happened')
                 self._task_iterator.reset()
             except:
                 raise RuntimeError(f"No game instances given for the game: '{self._game_name}'")
@@ -103,20 +102,20 @@ class BatchEnv(PlayPenEnv):
         self._player_models = player_models
         self._dialogue_pair_descriptor = game.get_dialogue_pair_descriptor(player_models)
         self._task_iterator = task_iterator
-        self.batch_size = batch_size
+        self._batch_size = batch_size
 
         if len(self._task_iterator) < 1:
             raise RuntimeError(f"No game instances given for the game: '{self._game_name}'")
 
         self.envs = self.generate_envs()
-        self.active_envs = set(range(self.batch_size))  # Track active environments
+        self.active_envs = set(range(self._batch_size))  # Track active environments
 
     def generate_envs(self):
         """
         Generate `batch_size` GameEnvs that will roll out in parallel.
         """
         envs = {}
-        for i in range(self.batch_size):
+        for i in range(self._batch_size):
             envs[i] = GameEnv(self._game, self._player_models, self._task_iterator)
         return envs
 
@@ -146,9 +145,9 @@ class BatchEnv(PlayPenEnv):
             done, info = env.step(response)
             info_dict[key] = {"done": done, "info": info}
 
-            # Reset the environment if it is done
-            if done:
-                self.env_reset(key)
+            # # Reset the environment if it is done
+            # if done:
+            #     self.env_reset(key)
 
         return info_dict
 
@@ -164,8 +163,24 @@ class BatchEnv(PlayPenEnv):
         Reset all environments in the batch.
         """
         self.envs = self.generate_envs()
-        self.active_envs = set(range(self.batch_size))  # Reset active environments
+        self.active_envs = set(range(self._batch_size))  # Reset active environments
 
+    def align(self, remaining_trajectories):
+        """
+        Shutdown surpulous enviornments so that we don't overgenerate.
+        """
+        if len(self.active_envs) > remaining_trajectories:
+            print(len(self.active_envs))
+            print(remaining_trajectories)
+            diff = len(self.active_envs) - remaining_trajectories
+            print(diff)
+            if diff <=0:
+                return
+            for i in range(diff):
+                self.active_envs.pop()
+
+    def get_env(self, env_id):
+        return self.envs[env_id]
 
     def reset(self):
         pass

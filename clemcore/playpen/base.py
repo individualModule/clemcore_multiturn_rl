@@ -82,9 +82,10 @@ class BatchRollout:
         self.callbacks.on_rollout_start(game_env, self.num_timesteps)
 
         collected_trajectories = 0
-
         while collected_trajectories < rollout_steps:
-            # Collect observations from all active environments
+            game_env.align(self._remaining_trajectories(collected_trajectories, rollout_steps)) # shut down surpolous environments
+
+             # Collect observations from all active environments
             observations = game_env.observe()
 
             # Prepare batch inputs for the model
@@ -126,12 +127,12 @@ class BatchRollout:
                 # If the environment is done, finalize the trajectory and reset
                 if done:
                     if forPlayer in player.name:
+                        single_env = game_env.get_env(env_id)
                         rollout_buffer.on_done()
                         self.num_timesteps += 1
                         collected_trajectories += 1
                         self.callbacks.update_locals(locals())
-                        self.callbacks.on_step()
-
+                        self.callbacks.on_step(single_env)
                     else:
                         # Drop the trajectory if it ended on the other player's turn
                         rollout_buffer.drop_trajectory()
@@ -139,12 +140,17 @@ class BatchRollout:
                     # Reset the environment
                     game_env.env_reset(env_id)
 
-
         if not eval:
             # Flatten trajectories for further sampling
             rollout_buffer.flatten_steps()
 
         self.callbacks.on_rollout_end()
+
+    def _remaining_trajectories(self, rollout_steps, collected_trajectories):
+        
+        remaining = collected_trajectories - rollout_steps 
+        return remaining
+
 
 class BasePlayPenMultiturnTrajectory(BasePlayPen):
     """
