@@ -145,7 +145,7 @@ class BatchRollout:
             rollout_buffer.flatten_steps()
 
         self.callbacks.on_rollout_end()
-
+        game_env.reset_batch() 
     def _remaining_trajectories(self, rollout_steps, collected_trajectories):
         
         remaining = collected_trajectories - rollout_steps 
