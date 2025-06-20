@@ -1,10 +1,11 @@
 import abc
 import torch
+from typing import Union
 
 from clemcore.backends import Model
 from clemcore.clemgame import GameRegistry
 from clemcore.playpen.envs import PlayPenEnv
-from clemcore.playpen.buffers import RolloutBuffer, ReplayBuffer
+from clemcore.playpen.buffers import RolloutBuffer, ReplayBuffer, BatchReplayBuffer, BatchRolloutBuffer
 from clemcore.playpen.callbacks import CallbackList, BaseCallback
 
 
@@ -68,7 +69,11 @@ class BatchRollout:
         self.callbacks.append(callback)
 
     @torch.no_grad()
-    def _collect_rollouts(self, game_env: PlayPenEnv, rollout_steps: int, rollout_buffer: RolloutBuffer, forPlayer="Player 2", eval=False):
+    def _collect_rollouts(self, game_env: PlayPenEnv,
+                        rollout_steps: int,
+                        rollout_buffer: Union[BatchRolloutBuffer, BatchReplayBuffer],
+                        forPlayer="Player 2",
+                        eval=False):
         """
         Collect rollouts using the BatchEnv, synchronizing turns for learner and teacher.
 
@@ -82,7 +87,7 @@ class BatchRollout:
 
         collected_trajectories = 0
         while collected_trajectories < rollout_steps:
-            game_env.align(self._remaining_trajectories(collected_trajectories, rollout_steps))  # Shut down surplus environments
+            # game_env.align(self._remaining_trajectories(collected_trajectories, rollout_steps))  # Shut down surplus environments
 
             # Collect observations from all active environments
             observations = game_env.observe()
@@ -113,7 +118,7 @@ class BatchRollout:
 
                 # Add step to the rollout buffer only for the target player
                 if self.learner_name in player.name:
-                    self._add_step_buffer(player, info, done, rollout_buffer)
+                    self._add_step_buffer(env_id, player, info, done, rollout_buffer)
                     
                 # If the environment is done, finalize the trajectory and reset
                 if done:
@@ -122,12 +127,18 @@ class BatchRollout:
                                                                             env_id,
                                                                             rollout_buffer,
                                                                             collected_trajectories)
+                        if collected_trajectories >= rollout_steps:
+                            break
+
                     else:
                         # Drop the trajectory if it ended on the other player's turn
-                        rollout_buffer.drop_trajectory()
+                        rollout_buffer.drop_trajectory(env_id)
 
                     # Reset the environment
                     game_env.env_reset(env_id)
+            # Break the outer loop if the target number of trajectories is reached
+            if collected_trajectories >= rollout_steps:
+                break
 
         if not eval:
             # Flatten trajectories for further sampling
@@ -135,7 +146,7 @@ class BatchRollout:
 
         self.callbacks.on_rollout_end()
         game_env.reset_batch()
-
+        rollout_buffer.reset_active_trajectories()
 
     def _remaining_trajectories(self, rollout_steps, collected_trajectories):
         
@@ -169,11 +180,12 @@ class BatchRollout:
             context = observations[env_id]["context"]
             player.update_context_and_response(context, response)
 
-    def _add_step_buffer(self, player, info, done, rollout_buffer):
+    def _add_step_buffer(self, env_id, player, info, done, rollout_buffer):
 
         full_context = player.get_context()[:-1]  # Retrieve full context excluding the last response
         response_dict = player.get_context()[-1:]  # Get the last response as a list
         rollout_buffer.on_step(
+            env_id=env_id,
             context=full_context.copy() if isinstance(full_context, dict) else full_context[:],
             response=response_dict.copy(),
             done=done,
@@ -183,7 +195,7 @@ class BatchRollout:
     def _update_rollout_state(self, game_env, env_id, rollout_buffer, collected_trajectories):
 
         single_env = game_env.get_env(env_id)
-        rollout_buffer.on_done()
+        rollout_buffer.on_done(env_id)
         self.num_timesteps += 1
         collected_trajectories += 1
         self.callbacks.update_locals(locals())
