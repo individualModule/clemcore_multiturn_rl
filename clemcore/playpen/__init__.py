@@ -3,7 +3,7 @@ from typing import List
 
 from clemcore.backends import Model
 from clemcore.clemgame import GameSpec, benchmark
-from clemcore.playpen.buffers import RolloutBuffer, BranchingRolloutBuffer, StepRolloutBuffer, ReplayBuffer
+from clemcore.playpen.buffers import RolloutBuffer, BranchingRolloutBuffer, StepRolloutBuffer, ReplayBuffer, BatchReplayBuffer, BatchRolloutBuffer
 from clemcore.playpen.callbacks import BaseCallback, GameRecordCallback, RolloutProgressCallback, CallbackList
 from clemcore.playpen.base import BasePlayPen, BasePlayPenMultiturn, BasePlayPenMultiturnTrajectory, BatchRollout
 from clemcore.playpen.envs import PlayPenEnv
@@ -24,6 +24,8 @@ __all__ = [
     "ReplayBuffer",
     "BranchingRolloutBuffer",
     "StepRolloutBuffer",
+    "BatchReplayBuffer",
+    "BatchRolloutBuffer",
     "GameEnv",
     "BatchEnv",
     "GameBranchingEnv",
