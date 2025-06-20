@@ -138,11 +138,12 @@ class BatchReplayBuffer(StepRolloutBuffer):
             sample_size: Number of steps to sample during training.
         """
         super().__init__(game_env)
+        self.trajectories = []
         self.buffer_size = buffer_size
         self.sample_size = sample_size
         self.steps: List[dict] = []  # Flattened steps for sampling.
         self.active_trajectories: Dict[int, List[dict]] = {}  # Incomplete trajectories.
-
+    
     def on_step(self, env_id: int, context, response, done, info):
         """
         Add a step to the active trajectory for the given environment ID.
@@ -209,6 +210,20 @@ class BatchReplayBuffer(StepRolloutBuffer):
             )
             return self.steps
         return random.sample(self.steps, self.sample_size)
+    
+    def sample(self, sample_size: int):
+        """Randomly sample trajectories from the buffer."""
+        if len(self.trajectories) < sample_size:
+            warnings.warn(
+                f"Requested sample size ({sample_size}) is larger than the number of stored trajectories "
+                f"({len(self.trajectories)}). Returning all available trajectories."
+            )
+            return self.trajectories[:-1]
+        return random.sample(self.trajectories[:-1], sample_size)
+
+    def sample_trajectories(self):
+        """Return a random sample of trajectories."""
+        return self.sample(self.sample_size)
 
     def save_buffer(self, file_path: str, default_name=True):
         """
@@ -266,6 +281,16 @@ class ReplayBuffer(StepRolloutBuffer):
 
         if self.current_trajectory < 0:
             self.current_trajectory = 0
+
+    def sample(self, sample_size: int):
+        """Randomly sample trajectories from the buffer."""
+        if len(self.trajectories) < sample_size:
+            warnings.warn(
+                f"Requested sample size ({sample_size}) is larger than the number of stored trajectories "
+                f"({len(self.trajectories)}). Returning all available trajectories."
+            )
+            return self.trajectories[:-1]
+        return random.sample(self.trajectories[:-1], sample_size)
 
     def sample_trajectories(self):
         """Return a random sample of trajectories."""
