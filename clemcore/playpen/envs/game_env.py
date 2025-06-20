@@ -108,7 +108,7 @@ class BatchEnv(PlayPenEnv):
             raise RuntimeError(f"No game instances given for the game: '{self._game_name}'")
 
         self.envs = self.generate_envs()
-        self.active_envs = set(range(self._batch_size))  # Track active environments
+        self.active_envs = list(range(self._batch_size))  # Track active environments
 
     def generate_envs(self):
         """
@@ -153,31 +153,30 @@ class BatchEnv(PlayPenEnv):
 
     def env_reset(self, env_id: int):
         """
-        Reset a specific environment by its ID.
+        Reset a specific environment by its ID and move it to the end of the stack.
         """
         if env_id in self.envs:
             self.envs[env_id].reset()
+            # Remove the environment from the active stack if it exists
+            if env_id in self.active_envs:
+                self.active_envs.remove(env_id)
+            # Add the environment back to the end of the stack
+            self.active_envs.append(env_id)
 
     def reset_batch(self):
         """
         Reset all environments in the batch.
         """
         self.envs = self.generate_envs()
-        self.active_envs = set(range(self._batch_size))  # Reset active environments
+        self.active_envs = list(range(self._batch_size))  # Track active environments
 
     def align(self, remaining_trajectories):
         """
         Shutdown surpulous enviornments so that we don't overgenerate.
         """
-        if len(self.active_envs) > remaining_trajectories:
-            print(len(self.active_envs))
-            print(remaining_trajectories)
-            diff = len(self.active_envs) - remaining_trajectories
-            print(diff)
-            if diff <=0:
-                return
-            for i in range(diff):
-                self.active_envs.pop()
+        while len(self.active_envs) > remaining_trajectories:
+            env_id = self.active_envs.pop()  # Pop the last environment
+            print(f"Deactivating environment {env_id}")
 
     def get_env(self, env_id):
         return self.envs[env_id]
