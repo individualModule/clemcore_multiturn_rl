@@ -132,17 +132,16 @@ class GameResourceLocator(abc.ABC):
             data = f.read()
         return data
 
-    def load_instances(self, instances_name):
+    def load_instances(self, instances_filename: str = None):
         """Construct instances path and return json object of the instance file.
         Args:
-            game_path: Path to the game directory.
-            instances_name: Name of the instances JSON file.
+            instances_filename: Name of the instances JSON file.
         Returns:
             A dict containing the contents of the given instances file.
         """
-        if instances_name is None:
-            instances_name = "instances"
-        return self.load_json(f"in/{instances_name}")
+        if instances_filename is None:
+            instances_filename = "instances"
+        return self.load_json(f"in/{instances_filename}")
 
     def load_template(self, file_path: Union[str, Path]) -> str:
         """Load a .template file from the game directory.

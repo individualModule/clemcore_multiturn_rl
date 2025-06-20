@@ -78,14 +78,14 @@ class GameBenchmark(GameResourceLocator):
         self.filter_experiment: List[str] = []
         self.is_single_player = True if game_spec["players"] == "one" else False
 
-    def setup(self, instances_name: str = None):
+    def setup(self, instances_filename: str = None):
         """Set up a benchmark run of a clemgame.
         Args:
-            instances_name: Name of the instances JSON file to be used for the benchmark run.
+            instances_filename: Name of the instances JSON file to be used for the benchmark run.
         """
-        if instances_name:
-            self.instances = self.load_instances(instances_name)
-        elif hasattr(self.game_spec, 'instances'):
+        if instances_filename:
+            self.instances = self.load_instances(instances_filename)
+        elif hasattr(self.game_spec, "instances"):
             self.instances = self.load_instances(self.game_spec.instances)
         else:
             self.instances = self.load_instances("instances")  # fallback to instances.json default
@@ -307,13 +307,13 @@ def is_game_benchmark(obj):
 
 
 @contextmanager
-def load_from_spec(game_spec: GameSpec, do_setup: bool = True, instances_name: str = None) \
+def load_from_spec(game_spec: GameSpec, do_setup: bool = True, instances_filename: str = None) \
         -> ContextManager[GameBenchmark]:
     """Load a clemgame using a GameSpec.
     Args:
         game_spec: A GameSpec instance holding specific clemgame data.
         do_setup: Determines if the clemgame's setup method will be executed upon loading.
-        instances_name: The name of the instances file to be used for the clemgame's setup if do_setup is True.
+        instances_filename: The name of the instances file to be used for the clemgame's setup if do_setup is True.
     """
     stdout_logger.info("Loading game benchmark for %s", game_spec.game_name)
     # add parent directory to python path if matching naming convention to load additional files if necessary
@@ -358,7 +358,7 @@ def load_from_spec(game_spec: GameSpec, do_setup: bool = True, instances_name: s
         game_cls = game_class(game_spec)  # instantiate the specific game class
 
         if do_setup:
-            game_cls.setup(instances_name)
+            game_cls.setup(instances_filename)
 
         yield game_cls
     finally:

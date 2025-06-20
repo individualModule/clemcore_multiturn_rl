@@ -4,7 +4,7 @@ import os
 import textwrap
 import logging
 from datetime import datetime
-from typing import List, Dict, Union
+from typing import List, Dict, Union, Callable
 
 import clemcore.backends as backends
 from clemcore.backends import ModelRegistry, BackendRegistry
@@ -79,7 +79,7 @@ def list_games(game_selector: str, verbose: bool):
 
 
 def run(game_selector: Union[str, Dict, GameSpec], model_selectors: List[backends.ModelSpec],
-        gen_args: Dict, experiment_name: str = None, instances_name: str = None, results_dir: str = None):
+        gen_args: Dict, experiment_name: str = None, instances_filename: str = None, results_dir: str = None):
     """Run specific model/models with a specified clemgame.
     Args:
         game_selector: Name of the game, matching the game's name in the game registry, OR GameSpec-like dict, OR GameSpec.
@@ -87,7 +87,7 @@ def run(game_selector: Union[str, Dict, GameSpec], model_selectors: List[backend
         gen_args: Text generation parameters for the backend; output length and temperature are implemented for the
             majority of model backends.
         experiment_name: Name of the experiment to run. Corresponds to the experiment key in the instances JSON file.
-        instances_name: Name of the instances JSON file to use for this benchmark run.
+        instances_filename: Name of the instances JSON file to use for this benchmark run.
         results_dir: Path to the results directory in which to store the episode records.
     """
     # check games first
@@ -121,7 +121,7 @@ def run(game_selector: Union[str, Dict, GameSpec], model_selectors: List[backend
 
     for game_spec in game_specs:
         try:
-            with benchmark.load_from_spec(game_spec, instances_name=instances_name) as game_benchmark:
+            with benchmark.load_from_spec(game_spec, instances_filename=instances_filename) as game_benchmark:
                 logger.info(
                     f'Running {game_spec["game_name"]} '
                     f'(models={player_models if player_models is not None else "see experiment configs"})')
@@ -215,7 +215,7 @@ def cli(args: argparse.Namespace):
             model_selectors=backends.ModelSpec.from_strings(args.models),
             gen_args=read_gen_args(args),
             experiment_name=args.experiment_name,
-            instances_name=args.instances_name,
+            instances_filename=args.instances_filename,
             results_dir=args.results_dir)
     if args.command_name == "score":
         score(args.game, results_dir=args.results_dir)
@@ -311,7 +311,7 @@ def main():
                             help="Specify the maximum number of tokens to be generated per turn (except for cohere). "
                                  "Be careful with high values which might lead to exceed your API token limits."
                                  "Default: 300.")
-    run_parser.add_argument("-i", "--instances_name", type=str, default=None,
+    run_parser.add_argument("-i", "--instances_filename", type=str, default=None,
                             help="The instances file name (.json suffix will be added automatically.")
     run_parser.add_argument("-r", "--results_dir", type=str, default="results",
                             help="A relative or absolute path to the results root directory. "
