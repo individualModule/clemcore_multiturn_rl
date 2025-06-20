@@ -79,7 +79,8 @@ def list_games(game_selector: str, verbose: bool):
 
 
 def run(game_selector: Union[str, Dict, GameSpec], model_selectors: List[backends.ModelSpec],
-        gen_args: Dict, experiment_name: str = None, instances_filename: str = None, results_dir: str = None):
+        gen_args: Dict, experiment_name: str = None, instances_filename: str = None,
+        results_dir: str = None, task_selector: Callable[[str, str], List[int]] = None):
     """Run specific model/models with a specified clemgame.
     Args:
         game_selector: Name of the game, matching the game's name in the game registry, OR GameSpec-like dict, OR GameSpec.
@@ -89,6 +90,7 @@ def run(game_selector: Union[str, Dict, GameSpec], model_selectors: List[backend
         experiment_name: Name of the experiment to run. Corresponds to the experiment key in the instances JSON file.
         instances_filename: Name of the instances JSON file to use for this benchmark run.
         results_dir: Path to the results directory in which to store the episode records.
+        task_selector: Given a game and experiment name returns a list of selected task ids (game ids).
     """
     # check games first
     game_registry = GameRegistry.from_directories_and_cwd_files()
@@ -130,7 +132,7 @@ def run(game_selector: Union[str, Dict, GameSpec], model_selectors: List[backend
                     logger.info("Only running experiment: %s", experiment_name)
                     game_benchmark.filter_experiment.append(experiment_name)
                 time_start = datetime.now()
-                game_benchmark.run(player_models=player_models, results_dir=results_dir)
+                game_benchmark.run(player_models=player_models, results_dir=results_dir, task_selector=task_selector)
                 try:
                     stdout_logger.info(f"Scoring game {game_spec['game_name']}")
                     game_benchmark.compute_scores(results_dir)
