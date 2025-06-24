@@ -216,7 +216,76 @@ class Player(abc.ABC):
             The programmatic response as text.
         """
         pass
+
+
+    def prepare_model_input(self, context: Dict, memorize: bool = True):
+        """
+        Prepares the input for the model call, including logging and handling the initial prompt.
+
+        Args:
+            context: The context to which the player should respond.
+            memorize: Whether the context is to be added to the player's message history.
+        Returns:
+            A tuple containing the prepared prompt, response object, and response text.
+        """
+        assert context["role"] == "user", f"The context must be given by the user role, but is {context['role']}"
+        memorized_initial_prompt = None
+        if self._is_initial_call and self._initial_prompt is not None:
+            assert len(self._messages) == 0, ("There must be no entry in the player's message history "
+                                            "on the first call, when the initial prompt is set.")
+            memorized_initial_prompt = deepcopy(self._initial_prompt)
+            self._messages.append(memorized_initial_prompt)
+            self.__log_send_context_event(memorized_initial_prompt["content"], label="initial prompt")
+
+        self.__log_send_context_event(context["content"], label="context" if memorize else "forget")
+        prompt = self._messages + [context]
     
+        return prompt
+    
+    def process_model_output(self, context, response, memorize = True):
+        """
+        Processes the model's output, including logging, forgetting extras, and updating the message history.
+
+        Args:
+            context: The context to which the player responded.
+            response_text: The textual response from the model.
+            prompt: The prompt used for the model call.
+            response_object: The response object returned by the model.
+            memorized_initial_prompt: The initial prompt, if any, used during the call.
+            memorize: Whether the context and response are to be added to the player's message history.
+        Returns:
+            The textual response from the model.
+        """
+        self.__log_response_received_event(response[2], label="response" if memorize else "forget")
+        if self._is_initial_call and self._initial_prompt is not None:
+            memorized_initial_prompt = deepcopy(self._initial_prompt)
+        # response[2] = response_text
+        # response[1] = response_object
+        # response[0] = prompt
+        
+        self._response_object = response[1]
+        self._response_object["clem_player"] = {
+                "call_start": "n/a",
+                "call_duration": "n/a",
+                "response": response[2],
+                "model_name": self.model.get_name()
+            }
+        self._prompt = response[0]
+        
+        # Copy context to ensure the original is preserved
+        memorized_context = context[-1] # i think it's the last entry.
+        for extra in self._forget_extras:
+            if extra in memorized_context:
+                del memorized_context[extra]
+            if memorized_initial_prompt is not None and extra in memorized_initial_prompt:
+                del memorized_initial_prompt[extra]
+
+        if memorize:
+            self._messages.append(memorized_context)
+            self._messages.append(dict(role="assistant", content=response[2]))
+
+        self._is_initial_call = False
+
     def update_context_and_response(self, context: Dict, response: tuple, memorize: bool = True):
         """
         Update the player's context and response after an external inference call.

@@ -67,9 +67,16 @@ class GameEnv(PlayPenEnv):
             self._task_iterator.reset()
             self.reset()
 
-    def observe(self) -> Tuple[Union[Player, Callable], Union[Dict, List[Dict]]]:
+    def observe(self, batch=False) -> Tuple[Union[Player, Callable], Union[Dict, List[Dict]]]:
         player = self.master.get_current_player()
         context = self.master.get_context_for(player)
+        
+        # full context is handled within the player. 
+        # In order to get the full context we need to obtain the context/_messages from player
+        # and add the context from the game master.
+        # It'd be more suitable to call context here 'observation' as the true context is _messages + observation 
+        if batch:
+            context = player.prepare_model_input(context)
         return player, context
 
     def step(self, response: Union[str, List]) -> Tuple[Union[bool, List], Union[Dict, List]]:
@@ -127,7 +134,7 @@ class BatchEnv(PlayPenEnv):
         obs_dict = {}
         for key in self.active_envs:
             env = self.envs[key]
-            player, context = env.observe()
+            player, context = env.observe(batch=True)
             obs_dict[key] = {"player": player, "context": context}
         return obs_dict
 

@@ -94,9 +94,9 @@ class BatchRollout:
 
             # Separate observations by player type
             learner_inputs, learner_env_ids, teacher_inputs, teacher_env_ids = self._separate_inputs(observations)
-            print(f'inputs')
-            print(learner_inputs)
-            print()
+            # print(f'inputs')
+            # print(learner_inputs)
+            # print()
 
             # Perform inference for learners
             learner_responses = self.learner.batch_generate(learner_inputs) if learner_inputs else []
@@ -169,10 +169,10 @@ class BatchRollout:
             player = obs["player"]
             context = obs["context"]
             if self.learner_name in player.name:
-                learner_inputs.append([context])
+                learner_inputs.append(context)
                 learner_env_ids.append(env_id)
             elif self.teacher_name in player.name:
-                teacher_inputs.append([context])
+                teacher_inputs.append(context)
                 teacher_env_ids.append(env_id)
 
         return learner_inputs, learner_env_ids, teacher_inputs, teacher_env_ids
@@ -182,7 +182,8 @@ class BatchRollout:
         for env_id, response in zip(env_ids, responses):
             player = observations[env_id]["player"]
             context = observations[env_id]["context"]
-            player.update_context_and_response(context, response)
+            # player.update_context_and_response(context, response)
+            player.process_model_output(context, response)
 
     def _add_step_buffer(self, env_id, player, info, done, rollout_buffer):
 
