@@ -1,11 +1,12 @@
 """Backend using HuggingFace transformers models.
 Uses HF tokenizers instruct/chat templates for proper input format per model.
 """
+from dataclasses import dataclass
 import logging
 from typing import List, Dict, Tuple, Any, Union
 import torch
 import re
-from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig
+from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig, StaticCache
 from peft import PeftModel
 from jinja2 import TemplateError
 
@@ -17,6 +18,11 @@ stdout_logger = logging.getLogger("clemcore.cli")
 
 FALLBACK_CONTEXT_SIZE = 256
 
+@dataclass
+class GenerationOutputs:
+    """Class to mimic the output structure of HuggingFace's generate() function."""
+    sequences: torch.Tensor
+    logits: list = None
 
 def load_config_and_tokenizer(model_spec: backends.ModelSpec) -> Tuple[AutoTokenizer, AutoConfig, int]:
     """Load a HuggingFace model's standard config and tokenizer, and get context token limit from config.
@@ -158,6 +164,7 @@ class HuggingfaceLocalModel(backends.Model):
         # fail-fast
         self.tokenizer, self.config, self.context_size = load_config_and_tokenizer(model_spec)
         self.model = load_model(model_spec)
+        self.softmax = torch.nn.Softmax(dim=-1)  # softmax over vocabulary dimension   
 
         # check if model's generation_config has pad_token_id set:
         if not self.model.generation_config.pad_token_id:
@@ -165,6 +172,219 @@ class HuggingfaceLocalModel(backends.Model):
             self.model.generation_config.pad_token_id = self.tokenizer.eos_token_id
 
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
+
+
+    def calculate_logprobs(self, prompt_ids, prompt_mask, completion_ids, completion_mask):
+        """
+        Inspired by the _forward class in TRL online DPO trainer. 
+        Double forward pass to obtain logprobs: 
+        1 - generate() to get completions
+        2 - forward pass to get logprobs
+
+
+        The padded tokens (based on completion mask) are assigned logprob 0 so they don't impact the loss
+        """    
+
+        # Get the number of tokens to truncate from prompt - 
+        num_tokens_to_truncate = max(prompt_ids.size(1) + completion_ids.size(1) - self.context_size, 0)
+
+        # Truncate left to avoid OOM
+        prompt_ids = prompt_ids[:, num_tokens_to_truncate:]
+        prompt_mask = prompt_mask[:, num_tokens_to_truncate:]
+
+        # Concatenate the prompt and completion
+        prompt_completion_ids = torch.cat((prompt_ids, completion_ids), dim=1)
+        prompt_completion_mask = torch.cat((prompt_mask, completion_mask), dim=1)
+
+        # Forward pass through the model
+        output = self.model(prompt_completion_ids, attention_mask=prompt_completion_mask)
+
+        # There is 1 offset because the model predicts the next token
+        logits = output.logits[:, prompt_ids.size(1) - 1 : -1]
+
+        # Take the completion tokens log probabilities
+        logprobs = torch.take_along_dim(logits.log_softmax(dim=-1), completion_ids.unsqueeze(-1), dim=2).squeeze(-1)
+        # Mask out the padding tokens
+        padding_mask = ~completion_mask.bool()
+        logprobs = logprobs * ~padding_mask  # Set logprobs for padding tokens to 0
+
+        return logprobs
+
+    def generate_action_and_logprobs(self,
+                                    observations: Union[List[dict], List[List[dict]]],
+                                    return_logprobs = True
+                                    ) -> Tuple[List[List[dict]], torch.Tensor]:
+        """
+        https://huggingface.co/blog/the_n_implementation_details_of_rlhf_with_ppo
+
+        Generate policy actions and calculate their log probabilities in a single forward pass.
+        Mask out special tokens so that it doesn't interfere with the gradient.
+        Args:
+            observations: A single observation or a batch of observations.
+
+        Returns:
+            Tuple containing:
+                - Generated actions in the format List[List[dict]].
+                - Log probabilities of the generated actions as a torch.Tensor.
+        """
+        eos_token_id = self.tokenizer.eos_token_id
+        pad_token_id = self.tokenizer.pad_token_id
+        
+        # Ensure observations are in batch format
+        if isinstance(observations[0], dict):
+            observations = [observations]  # Wrap single observation in a list
+
+        # Apply chat template and tokenize observations
+        obs_template = self.tokenizer.apply_chat_template(observations, add_generation_prompt=True, tokenize=False)
+        obs_tokens = self.tokenizer(obs_template, padding=True, truncation=True, return_tensors="pt").to(self.device)
+
+        # Greedy decoding or sampling
+        do_sample: bool = False
+        if self.get_temperature() > 0.0:
+            do_sample = True
+
+        generate_kwargs = {
+            "input_ids": obs_tokens['input_ids'],
+            "attention_mask": obs_tokens['attention_mask'],
+            "max_new_tokens": self.get_max_tokens(),
+            "do_sample": do_sample,
+            "return_dict_in_generate": True
+        }
+
+        if do_sample:
+            generate_kwargs["temperature"] = self.get_temperature()
+
+        outputs = self.model.generate(**generate_kwargs) # custom generation fn to get logprobs
+        # Extract generated token IDs
+        completion_ids = outputs.sequences[:, obs_tokens['input_ids'].size(1):]
+        completion_ids, completion_mask = truncate_right(completion_ids, eos_token_id, pad_token_id)
+        generated_texts = self.tokenizer.batch_decode(outputs.sequences[:,:], skip_special_tokens=True)
+       
+        logprobs = None
+        if return_logprobs:
+            logprobs = self.calculate_logprobs(obs_tokens['input_ids'],
+                                            obs_tokens['attention_mask'],
+                                            completion_ids,
+                                            completion_mask)
+            
+        actions = []
+
+        for i, (text, generated_id_seq) in enumerate(zip(generated_texts, completion_ids)):
+            # Remove special tokens from the generated text
+            prompt_text = self.tokenizer.decode(obs_tokens['input_ids'][i], skip_special_tokens=True).strip()
+            response_text = text.replace(prompt_text, '').strip()
+
+            if 'output_split_prefix' in self.model_spec.model_config:
+                response_text = response_text.rsplit(self.model_spec['model_config']['output_split_prefix'], maxsplit=1)[1]
+
+            eos_to_cull = self.model_spec['model_config']['eos_to_cull']
+            response_text = re.sub(eos_to_cull, "", response_text)
+
+            actions.append([{"role": "assistant", "content": response_text}])
+
+
+        # Pad filtered log probabilities to ensure consistent tensor shape
+        if return_logprobs:
+            assert logprobs.size(0) == len(observations), "Log probabilities batch size mismatch."
+            assert torch.isfinite(logprobs).all(), "Log probabilities contain NaN or Inf values."
+            
+        # --- Sanity Check ---
+        assert len(actions) == len(observations), "Mismatch between number of actions and observations."
+        assert all(isinstance(action[0]["content"], str) and action[0]["content"] for action in actions), \
+            "Generated actions are not valid strings."
+
+        return actions, logprobs
+
+    def batch_generate(self, batch_messages: List[List[Dict]], return_full_text: bool = False, log_messages: bool = False):
+        """
+        Generate responses for a batch of message histories.
+
+        Args:
+            batch_messages: A batch of message histories. Each message history is a list of dictionaries.
+            return_full_text: If True, return the full input context along with the response.
+            log_messages: If True, log the raw and cleaned messages passed.
+
+        Returns:
+            A list of tuples, where each tuple contains:
+                - The prompt used for generation.
+                - The response object containing metadata.
+                - The generated response text.
+        """
+        # Ensure batch_messages is a list of lists
+        # print(f"Input batch_messages: {batch_messages}")
+        assert isinstance(batch_messages, list) and all(isinstance(messages, list) for messages in batch_messages), \
+            "batch_messages must be a list of message histories (lists of dictionaries)."
+
+        # Log raw messages if requested
+        if log_messages:
+            for i, messages in enumerate(batch_messages):
+                logger.info(f"Raw messages for batch {i}: {messages}")
+
+        # Flatten and clean messages for each batch
+        batch_cleaned_messages = [ensure_alternating_roles(messages) for messages in batch_messages]
+
+        # Log cleaned messages if requested
+        if log_messages:
+            for i, messages in enumerate(batch_cleaned_messages):
+                logger.info(f"Cleaned messages for batch {i}: {messages}")
+
+        # Apply chat template and tokenize for the batch
+        batch_prompt_template = self.tokenizer.apply_chat_template(batch_cleaned_messages, add_generation_prompt=True, tokenize=False)
+        batch_prompt_tokens = self.tokenizer(batch_prompt_template, padding=True, truncation=True, return_tensors="pt").to(self.device)
+
+        # Decode the prompts for logging
+        batch_prompt_texts = self.tokenizer.batch_decode(batch_prompt_tokens["input_ids"], skip_special_tokens=True)
+
+        # Check context limits for each batch
+        for i, prompt_tokens in enumerate(batch_prompt_tokens["input_ids"]):
+            context_check = _check_context_limit(self.context_size, prompt_tokens, max_new_tokens=self.get_max_tokens())
+            if not context_check[0]:  # If context limit exceeded
+                logger.info(f"Context token limit for batch {i} exceeded: {context_check[1]}/{context_check[3]}")
+                raise backends.ContextExceededError(
+                    f"Context token limit for batch {i} exceeded",
+                    tokens_used=context_check[1],
+                    tokens_left=context_check[2],
+                    context_size=context_check[3]
+                )
+
+        # Perform generation for the batch
+        do_sample = self.get_temperature() > 0.0
+        generate_kwargs = {
+            "input_ids": batch_prompt_tokens["input_ids"],
+            "attention_mask": batch_prompt_tokens["attention_mask"],
+            "max_new_tokens": self.get_max_tokens(),
+            "do_sample": do_sample,
+            "temperature": self.get_temperature() if do_sample else None
+        }
+        batch_model_output_ids = self.model.generate(**generate_kwargs)
+
+        # Decode the generated outputs
+        batch_model_outputs = self.tokenizer.batch_decode(batch_model_output_ids, skip_special_tokens=True)
+
+        # Prepare the responses
+        batch_responses = []
+        for i, model_output in enumerate(batch_model_outputs):
+            prompt_text = batch_prompt_texts[i]
+            if not return_full_text:
+                response_text = model_output.replace(prompt_text, "").strip()
+                if "output_split_prefix" in self.model_spec.model_config:
+                    response_text = response_text.rsplit(self.model_spec["model_config"]["output_split_prefix"], maxsplit=1)[1]
+                eos_to_cull = self.model_spec["model_config"]["eos_to_cull"]
+                response_text = re.sub(eos_to_cull, "", response_text)
+            else:
+                response_text = model_output.strip()
+
+            response_object = {"response": model_output}
+            batch_responses.append((prompt_text, response_object, response_text))
+
+            # Log the response if requested
+            if log_messages:
+                logger.info(f"Response for batch {i}: {response_text}")
+        # print("Output batch_responses (response_text only):")
+        # for response in batch_responses:
+        #     print(response[2])  # Print only the response_text
+
+        return batch_responses
 
     def generate_response(self, messages: List[Dict],
                           return_full_text: bool = False,
@@ -403,3 +623,61 @@ def check_context_limit(messages: List[Dict], model_spec: backends.ModelSpec,
         print(f"{tokens_used} input tokens, {tokens_left} tokens of {context_size} left.")
     fits = context_check_tuple[0]
     return fits, tokens_used, tokens_left, context_size
+
+
+
+def truncate_right(
+    input_ids: torch.Tensor, stop_token_id: int, pad_token_id: int
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Truncates the input tensor from the right side after the first occurrence of the stop token.
+
+    Args:
+        input_ids (`torch.Tensor`):
+            The tensor containing the responses to be truncated
+        stop_token_id (`int`):
+            The token ID representing the stop token where truncation occurs
+        pad_token_id (`int`):
+            The token ID representing the pad token used to fill the truncated responses
+
+    Returns:
+        tuple:
+            - `output_ids` (`torch.Tensor`):
+                The truncated responses tensor with pad tokens filled after the stop token
+            - `mask` (`torch.Tensor`):
+                The mask tensor to indicate the padding tokens
+    """
+    if isinstance(input_ids, torch.Tensor):
+        print("input_ids is a tensor.")
+    else:
+        print("input_ids is not a tensor.")
+
+    trunc_idxs = first_true_indices(input_ids == stop_token_id).unsqueeze(-1)
+    new_size = [1] * (len(input_ids.size()) - 1) + [input_ids.shape[1]]
+    idxs = torch.arange(input_ids.shape[1], device=input_ids.device).view(*new_size)
+    output_ids = torch.masked_fill(input_ids, idxs > trunc_idxs, pad_token_id)
+    mask = torch.masked_fill(torch.ones_like(input_ids), idxs > trunc_idxs, 0)
+
+    return output_ids, mask
+
+def first_true_indices(bools: torch.Tensor, dtype=torch.long):
+    """
+    Takes an N-dimensional bool tensor and returns an (N-1)-dimensional tensor of integers giving
+    the position of the first True in each "row".
+
+    Returns the length of the rows (bools.size(-1)) if no element is True in a given row.
+
+    Args:
+        bools (`torch.Tensor`):
+            An N-dimensional boolean tensor.
+        dtype (`torch.dtype`, optional):
+            The desired data type of the output tensor. Defaults to `torch.long`.
+
+    Returns:
+        `torch.Tensor`:
+            An (N-1)-dimensional tensor of integers indicating the position of the first True
+            in each row. If no True value is found in a row, returns the length of the row.
+    """
+    row_len = bools.size(-1)
+    zero_or_index = row_len * (~bools).type(dtype) + torch.arange(row_len, dtype=dtype, device=bools.device)
+    return torch.min(zero_or_index, dim=-1).values

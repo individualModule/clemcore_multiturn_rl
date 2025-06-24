@@ -2,6 +2,7 @@ import abc
 from copy import deepcopy
 from datetime import datetime
 from typing import List, Dict, Union
+import torch
 
 from clemcore import backends
 from clemcore.clemgame.recorder import GameRecorder, NoopGameRecorder
@@ -124,6 +125,13 @@ class Player(abc.ABC):
     def get_last_call_info(self):
         return self._prompt, self._response_object
 
+    def get_context(self):
+        """
+        Returns full context for the player.
+        Reason for the fn -> Needed for playpen - currently we get only single-turned context 
+        """
+        return self._messages
+
     def __call__(self, context: Dict, memorize: bool = True) -> str:
         """
         Let the player respond (act verbally) to a given context.
@@ -208,3 +216,50 @@ class Player(abc.ABC):
             The programmatic response as text.
         """
         pass
+    
+    def update_context_and_response(self, context: Dict, response: tuple, memorize: bool = True):
+        """
+        Update the player's context and response after an external inference call.
+
+        Args:
+            context: The context to which the player responded.
+            response: Response object - prompt, resp_object, text 
+            memorize: Whether the context and response are to be added to the player's message history.
+        """
+        assert context["role"] == "user", f"The context must be given by the user role, but is {context['role']}"
+        memorized_initial_prompt = None
+        if self._is_initial_call and self._initial_prompt is not None:
+            assert len(self._messages) == 0, ("There must be no entry in the player's message history "
+                                            "on the first call, when the initial prompt is set.")
+            memorized_initial_prompt = deepcopy(self._initial_prompt)
+            self._messages.append(memorized_initial_prompt)
+            self.__log_send_context_event(memorized_initial_prompt["content"], label="initial prompt")
+
+        self.__log_send_context_event(context["content"], label="context" if memorize else "forget")
+        self.__log_response_received_event(response[2], label="response" if memorize else "forget")
+        # response[2] = response_text
+        # response[1] = response_object
+        # response[0] = prompt
+        
+        self._response_object = response[1]
+        self._response_object["clem_player"] = {
+                "call_start": "n/a",
+                "call_duration": "n/a",
+                "response": response[2],
+                "model_name": self.model.get_name()
+            }
+        self._prompt = response[0]
+        
+        # Copy context to ensure the original is preserved
+        memorized_context = deepcopy(context)
+        for extra in self._forget_extras:
+            if extra in memorized_context:
+                del memorized_context[extra]
+            if memorized_initial_prompt is not None and extra in memorized_initial_prompt:
+                del memorized_initial_prompt[extra]
+
+        if memorize:
+            self._messages.append(memorized_context)
+            self._messages.append(dict(role="assistant", content=response[2]))
+
+        self._is_initial_call = False
