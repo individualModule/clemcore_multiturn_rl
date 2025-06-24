@@ -266,8 +266,8 @@ class DialogueGameMaster(GameMaster):
 
         done = not self._does_game_proceed()
         if done:
-            self._on_after_game()
             self.info["episode_score"] = self.compute_episode_score()
+            self._on_after_game()
         elif self._start_next_round():
             self.__prepare_next_round()
 

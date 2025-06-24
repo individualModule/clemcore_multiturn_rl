@@ -289,7 +289,97 @@ class HuggingfaceLocalModel(backends.Model):
 
         return actions, logprobs
 
-    
+    def batch_generate(self, batch_messages: List[List[Dict]], return_full_text: bool = False, log_messages: bool = False):
+        """
+        Generate responses for a batch of message histories.
+
+        Args:
+            batch_messages: A batch of message histories. Each message history is a list of dictionaries.
+            return_full_text: If True, return the full input context along with the response.
+            log_messages: If True, log the raw and cleaned messages passed.
+
+        Returns:
+            A list of tuples, where each tuple contains:
+                - The prompt used for generation.
+                - The response object containing metadata.
+                - The generated response text.
+        """
+        # Ensure batch_messages is a list of lists
+        # print(f"Input batch_messages: {batch_messages}")
+        assert isinstance(batch_messages, list) and all(isinstance(messages, list) for messages in batch_messages), \
+            "batch_messages must be a list of message histories (lists of dictionaries)."
+
+        # Log raw messages if requested
+        if log_messages:
+            for i, messages in enumerate(batch_messages):
+                logger.info(f"Raw messages for batch {i}: {messages}")
+
+        # Flatten and clean messages for each batch
+        batch_cleaned_messages = [ensure_alternating_roles(messages) for messages in batch_messages]
+
+        # Log cleaned messages if requested
+        if log_messages:
+            for i, messages in enumerate(batch_cleaned_messages):
+                logger.info(f"Cleaned messages for batch {i}: {messages}")
+
+        # Apply chat template and tokenize for the batch
+        batch_prompt_template = self.tokenizer.apply_chat_template(batch_cleaned_messages, add_generation_prompt=True, tokenize=False)
+        batch_prompt_tokens = self.tokenizer(batch_prompt_template, padding=True, truncation=True, return_tensors="pt").to(self.device)
+
+        # Decode the prompts for logging
+        batch_prompt_texts = self.tokenizer.batch_decode(batch_prompt_tokens["input_ids"], skip_special_tokens=True)
+
+        # Check context limits for each batch
+        for i, prompt_tokens in enumerate(batch_prompt_tokens["input_ids"]):
+            context_check = _check_context_limit(self.context_size, prompt_tokens, max_new_tokens=self.get_max_tokens())
+            if not context_check[0]:  # If context limit exceeded
+                logger.info(f"Context token limit for batch {i} exceeded: {context_check[1]}/{context_check[3]}")
+                raise backends.ContextExceededError(
+                    f"Context token limit for batch {i} exceeded",
+                    tokens_used=context_check[1],
+                    tokens_left=context_check[2],
+                    context_size=context_check[3]
+                )
+
+        # Perform generation for the batch
+        do_sample = self.get_temperature() > 0.0
+        generate_kwargs = {
+            "input_ids": batch_prompt_tokens["input_ids"],
+            "attention_mask": batch_prompt_tokens["attention_mask"],
+            "max_new_tokens": self.get_max_tokens(),
+            "do_sample": do_sample,
+            "temperature": self.get_temperature() if do_sample else None
+        }
+        batch_model_output_ids = self.model.generate(**generate_kwargs)
+
+        # Decode the generated outputs
+        batch_model_outputs = self.tokenizer.batch_decode(batch_model_output_ids, skip_special_tokens=True)
+
+        # Prepare the responses
+        batch_responses = []
+        for i, model_output in enumerate(batch_model_outputs):
+            prompt_text = batch_prompt_texts[i]
+            if not return_full_text:
+                response_text = model_output.replace(prompt_text, "").strip()
+                if "output_split_prefix" in self.model_spec.model_config:
+                    response_text = response_text.rsplit(self.model_spec["model_config"]["output_split_prefix"], maxsplit=1)[1]
+                eos_to_cull = self.model_spec["model_config"]["eos_to_cull"]
+                response_text = re.sub(eos_to_cull, "", response_text)
+            else:
+                response_text = model_output.strip()
+
+            response_object = {"response": model_output}
+            batch_responses.append((prompt_text, response_object, response_text))
+
+            # Log the response if requested
+            if log_messages:
+                logger.info(f"Response for batch {i}: {response_text}")
+        # print("Output batch_responses (response_text only):")
+        # for response in batch_responses:
+        #     print(response[2])  # Print only the response_text
+
+        return batch_responses
+
     def generate_response(self, messages: List[Dict],
                           return_full_text: bool = False,
                           log_messages: bool = False) -> Tuple[Any, Any, str]:
