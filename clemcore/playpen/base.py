@@ -94,7 +94,9 @@ class BatchRollout:
 
             # Separate observations by player type
             learner_inputs, learner_env_ids, teacher_inputs, teacher_env_ids = self._separate_inputs(observations)
-
+            print(f'inputs')
+            print(learner_inputs)
+            print()
 
             # Perform inference for learners
             learner_responses = self.learner.batch_generate(learner_inputs) if learner_inputs else []
@@ -109,7 +111,8 @@ class BatchRollout:
 
             # Step through the environments with the responses
             step_results = game_env.step(responses)
-
+            # print(observations)
+            # print(responses)
             # Process step results
             for env_id, result in step_results.items():
                 done = result["done"]
@@ -118,6 +121,7 @@ class BatchRollout:
 
                 # Add step to the rollout buffer only for the target player
                 if self.learner_name in player.name:
+                    # print('here')
                     self._add_step_buffer(env_id, player, info, done, rollout_buffer)
                     
                 # If the environment is done, finalize the trajectory and reset
@@ -183,7 +187,9 @@ class BatchRollout:
     def _add_step_buffer(self, env_id, player, info, done, rollout_buffer):
 
         full_context = player.get_context()[:-1]  # Retrieve full context excluding the last response
+        # print(full_context)
         response_dict = player.get_context()[-1:]  # Get the last response as a list
+        # print(response_dict)
         rollout_buffer.on_step(
             env_id=env_id,
             context=full_context.copy() if isinstance(full_context, dict) else full_context[:],
@@ -202,108 +208,6 @@ class BatchRollout:
         self.callbacks.on_step(single_env)
 
         return collected_trajectories
-
-class BatchRolloutOld:
-
-    def __init__(self, learner: Model, teacher: Model):
-        """
-        Initialize the BatchRollout class.
-
-        Args:
-            model: The model used for inference.
-            callbacks: A list of callbacks to track rollout progress.
-        """
-        self.learner = learner 
-        self.teacher = teacher
-        self.num_timesteps = 0
-        self.callbacks = CallbackList()
-
-    def add_callback(self, callback: BaseCallback):
-        self.callbacks.append(callback)
-
-    @torch.no_grad()
-    def _collect_rollouts(self, game_env: PlayPenEnv, rollout_steps: int, rollout_buffer: RolloutBuffer, forPlayer: str, eval=False):
-        """
-        Collect rollouts using the BatchEnv, focusing on the target player.
-
-        Args:
-            game_env: The BatchEnv instance managing multiple GameEnv instances.
-            rollout_steps: The number of rollout steps to collect.
-            rollout_buffer: The buffer to store collected trajectories.
-            forPlayer: The name of the target player to collect rollouts for.
-            eval: Whether this is an evaluation rollout (no buffer flattening).
-        """
-        self.callbacks.on_rollout_start(game_env, self.num_timesteps)
-
-        collected_trajectories = 0
-        while collected_trajectories < rollout_steps:
-            game_env.align(self._remaining_trajectories(collected_trajectories, rollout_steps)) # shut down surpolous environments
-
-             # Collect observations from all active environments
-            observations = game_env.observe()
-
-            # Prepare batch inputs for the model
-            batch_inputs = [[obs["context"]] for obs in observations.values()]
-            batch_players = [obs["player"] for obs in observations.values()]
-
-            # Perform inference using the model
-            batch_responses = self.learner.batch_generate(batch_inputs)
-
-            # Update players with the generated responses
-            for env_id, response in zip(observations.keys(), batch_responses):
-                player = observations[env_id]["player"]
-                context = observations[env_id]["context"]
-                player.update_context_and_response(context, response)
-
-            # Map responses back to environment IDs
-            responses = {env_id: response[2] for env_id, response in zip(observations.keys(), batch_responses)}
-            # print(responses)
-            # Step through the environments with the responses
-            step_results = game_env.step(responses)
-
-            # Process step results
-            for env_id, result in step_results.items():
-                done = result["done"]
-                info = result["info"]
-                player = observations[env_id]["player"]
-
-                # Add step to the rollout buffer only for the target player
-                if forPlayer in player.name:
-                    full_context = player.get_context()[:-1]  # Retrieve full context excluding the last response
-                    response_dict = player.get_context()[-1:]  # Get the last response as a list
-                    rollout_buffer.on_step(
-                        context=full_context.copy() if isinstance(full_context, dict) else full_context[:],
-                        response=response_dict.copy(),
-                        done=done,
-                        info=info.copy() if isinstance(info, dict) else info[:]
-                    )
-
-                # If the environment is done, finalize the trajectory and reset
-                if done:
-                    if forPlayer in player.name:
-                        single_env = game_env.get_env(env_id)
-                        rollout_buffer.on_done()
-                        self.num_timesteps += 1
-                        collected_trajectories += 1
-                        self.callbacks.update_locals(locals())
-                        self.callbacks.on_step(single_env)
-                    else:
-                        # Drop the trajectory if it ended on the other player's turn
-                        rollout_buffer.drop_trajectory()
-
-                    # Reset the environment
-                    game_env.env_reset(env_id)
-
-        if not eval:
-            # Flatten trajectories for further sampling
-            rollout_buffer.flatten_steps()
-
-        self.callbacks.on_rollout_end()
-        game_env.reset_batch() 
-    def _remaining_trajectories(self, rollout_steps, collected_trajectories):
-        
-        remaining = collected_trajectories - rollout_steps 
-        return remaining
 
 
 class BasePlayPenMultiturnTrajectory(BasePlayPen):
