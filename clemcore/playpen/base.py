@@ -101,14 +101,16 @@ class BatchRollout:
             # Perform inference for learners
             learner_responses = self.learner.batch_generate(learner_inputs) if learner_inputs else []
             self._update_player_context(learner_env_ids, learner_responses, observations)
-
+            # print(learner_inputs)
+            # print()
+            # print(learner_responses)
+            # print()
             # Perform inference for teachers
             teacher_responses = self.teacher.batch_generate(teacher_inputs) if teacher_inputs else []
             self._update_player_context(teacher_env_ids, teacher_responses, observations)
             print(f"Teacher resp: {len(teacher_responses)} --- Learner Resp: {len(learner_responses)}")
             # Combine responses for step processing
             responses = {env_id: response[2] for env_id, response in zip(learner_env_ids + teacher_env_ids, learner_responses + teacher_responses)}
-
             # Step through the environments with the responses
             step_results = game_env.step(responses)
             # print(observations)
