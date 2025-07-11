@@ -284,16 +284,16 @@ class HuggingfaceLocalModel(backends.Model):
 
             actions.append([{"role": "assistant", "content": response_text}])
 
-        print('---------------------')
-        print(len(actions))
-        print('+++++++++++==========++++++++')
-        print(actions)
-        print('=========================')
-        print(actions[0])
-        print()
-        print(actions[0][0]['content'])
-        print()
-        print('-------------------')
+        # print('---------------------')
+        # print(len(actions))
+        # print('+++++++++++==========++++++++')
+        # print(actions)
+        # print('=========================')
+        # print(actions[0])
+        # print()
+        # print(actions[0][0]['content'])
+        # print()
+        # print('-------------------')
         # Pad filtered log probabilities to ensure consistent tensor shape
         if return_logprobs:
             assert logprobs.size(0) == len(observations), "Log probabilities batch size mismatch."
@@ -301,8 +301,15 @@ class HuggingfaceLocalModel(backends.Model):
             
         # --- Sanity Check ---
         assert len(actions) == len(observations), "Mismatch between number of actions and observations."
-        assert all(isinstance(action[0]["content"], str) and action[0]["content"] for action in actions), \
-            "Generated actions are not valid strings."
+        try:
+            for action in actions:
+                assert isinstance(action[0]["content"], str) and action[0]["content"], \
+                    f"Generated action is not a valid string: {action}"
+        except Exception as e:
+            print(f"Action causing the error: {action}")
+            print(f"Exception: {e}")
+            raise ValueError("An invalid action was generated.")  # Raise a specific error
+            # maybe raise error
 
         return actions, logprobs
 
