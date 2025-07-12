@@ -233,9 +233,9 @@ class HuggingfaceLocalModel(backends.Model):
         # Ensure observations are in batch format
         if isinstance(observations[0], dict):
             observations = [observations]  # Wrap single observation in a list
-        print()
-        print(observations)
-        print()
+        # print()
+        # print(observations)
+        # print()
         # Apply chat template and tokenize observations
         obs_template = self.tokenizer.apply_chat_template(observations, add_generation_prompt=True, tokenize=False)
         obs_tokens = self.tokenizer(obs_template, padding=True, truncation=True, return_tensors="pt").to(self.device)
@@ -283,11 +283,11 @@ class HuggingfaceLocalModel(backends.Model):
 
             actions.append([{"role": "assistant", "content": response_text}])
 
-        print('---------------------')
-        print(len(actions))
-        print('+++++++++++==========++++++++')
-        print(actions)
-        print('=========================')
+        # print('---------------------')
+        # print(len(actions))
+        # print('+++++++++++==========++++++++')
+        # print(actions)
+        # print('=========================')
         # print(actions[0])
         # print()
         # print(actions[0][0]['content'])
