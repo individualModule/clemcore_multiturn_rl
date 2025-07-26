@@ -44,6 +44,9 @@ class GameInstanceIterator:
 
     def __len__(self):
         return len(self._queue)
+    
+    def get_queue(self):
+        return self._queue
 
     def clone(self) -> "GameInstanceIterator":
         _clone = GameInstanceIterator(self._instances, do_shuffle=self._do_shuffle, reset=False)

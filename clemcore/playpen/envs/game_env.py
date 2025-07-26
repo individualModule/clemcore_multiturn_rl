@@ -99,6 +99,8 @@ class GameEnv(PlayPenEnv):
         store_file(self.master.game_recorder.interactions, f"interactions.json", episode_path)
         store_file(self.master.game_recorder.requests, f"requests.json", episode_path)
 
+
+
 class BatchEnv(PlayPenEnv):
 
     def __init__(self, game: GameBenchmark, player_models: List[Model], task_iterator: GameInstanceIterator,
@@ -177,20 +179,17 @@ class BatchEnv(PlayPenEnv):
         self.envs = self.generate_envs()
         self.active_envs = list(range(self._batch_size))  # Track active environments
 
-    def align(self, remaining_trajectories):
-        """
-        Shutdown surpulous enviornments so that we don't overgenerate.
-        """
-        while len(self.active_envs) > remaining_trajectories:
-            env_id = self.active_envs.pop()  # Pop the last environment
-            print(f"Deactivating environment {env_id}")
-
     def get_env(self, env_id):
         return self.envs[env_id]
 
+    def reset_iterator(self):
+        # resets the iteration queue
+        # doing this should always yield the same queue for evaluation
+        self._task_iterator.reset()
+        
     def reset(self):
         pass
-    
+
     def store_records(self, top_dir: str, rollout_dir: str, episode_dir: str,
                   store_experiment: bool = False, store_instance: bool = False):
         
@@ -208,3 +207,96 @@ class BatchEnv(PlayPenEnv):
         store_file(self.master.game_recorder.interactions, f"interactions.json", episode_path)
         store_file(self.master.game_recorder.requests, f"requests.json", episode_path)
 
+
+
+class EvalBatchEnv(BatchEnv):
+
+    def __init__(self, game: GameBenchmark, player_models: List[Model], task_iterator: GameInstanceIterator,
+             reset=True, batch_size=4):
+        """
+        Initialize the EvalBatchEnv class.
+        Args:
+            game: The game benchmark instance.
+            player_models: List of player models.
+            task_iterator: The iterator providing game instances.
+            reset: Whether to reset the environment on initialization.
+            batch_size: Number of environments to run in parallel.
+        """
+        super().__init__(game, player_models, task_iterator, reset, batch_size)
+        self.queue = self._task_iterator.get_queue()  # Get the full queue from the iterator
+        self.len_active = min(len(self.queue), self._batch_size) # number of environments to activate
+        print(f"Initialized len_active: {self.len_active}")  # Debug statement
+
+        self.envs = self.generate_envs()  # Generate environments based on the queue
+        self.active_envs = list(range(self.len_active))  # Track active environments
+
+    def generate_envs(self):
+        """
+        Generate environments for all instances in the queue.
+        """
+
+        envs = {}
+        for i in range(self.len_active):
+            envs[i] = GameEnv(self._game, self._player_models, GameInstanceIterator([self.queue.pop(0)]))
+        return envs
+    
+    def step(self, responses: Dict[int, Union[str, List]]):
+        """
+        Apply a batch of responses to the corresponding environments.
+        Args:
+            responses: A dictionary where keys are environment IDs and values are responses.
+        Returns:
+            A dictionary with environment IDs as keys and step results (`done`, `info`) as values.
+        """
+        info_dict = {}
+        for key, response in responses.items():
+            env = self.envs[key]
+            done, info = env.step(response)
+            info_dict[key] = {"done": done, "info": info}
+
+            # If there are remaining items in the queue, create a new environment
+            if done:
+                self.shutdown_env(key)
+
+                if len(self.queue) > 0:
+                    new_env_id = max(self.envs.keys(), default=-1) + 1
+                    self.envs[new_env_id] = GameEnv(
+                        self._game,
+                        self._player_models,
+                        GameInstanceIterator([self.queue.pop(0)])
+                    )
+                    self.active_envs.append(new_env_id)
+                    
+
+        return info_dict
+
+    def shutdown_env(self, env_id: int):
+        """
+        Remove a specific environment by its ID and shut it down.
+        """
+        if env_id in self.envs:
+            del self.envs[env_id]  # Remove the environment from the dictionary
+            if env_id in self.active_envs:
+                self.active_envs.remove(env_id)  # Remove it from the active environments list
+            print(f"Shutting down environment {env_id}")
+
+    def reset_batch(self):
+        """
+        Reset all environments in the batch.
+        """
+        self.reset_iterator()
+        self.queue = self._task_iterator.get_queue()  # Get the full queue from the iterator
+        self.len_active = min(len(self.queue), self._batch_size) # number of environments to activate
+        self.envs = self.generate_envs()  # Generate environments based on the queue
+        self.active_envs = list(range( self.len_active))  # Track active environments
+
+
+    def is_done(self):
+
+        if self.len(self.active_envs) > 0:
+            return False
+        return True
+    
+    def get_rollout_length(self):
+
+        return len(self.queue)

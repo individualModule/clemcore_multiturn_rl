@@ -5,9 +5,9 @@ from clemcore.backends import Model
 from clemcore.clemgame import GameSpec, benchmark
 from clemcore.playpen.buffers import RolloutBuffer, BranchingRolloutBuffer, StepRolloutBuffer, ReplayBuffer, BatchReplayBuffer, BatchRolloutBuffer
 from clemcore.playpen.callbacks import BaseCallback, GameRecordCallback, RolloutProgressCallback, CallbackList
-from clemcore.playpen.base import BasePlayPen, BasePlayPenMultiturn, BasePlayPenMultiturnTrajectory, BatchRollout
+from clemcore.playpen.base import BasePlayPen, BatchRollout, EvalBatchRollout
 from clemcore.playpen.envs import PlayPenEnv
-from clemcore.playpen.envs.game_env import GameEnv, BatchEnv
+from clemcore.playpen.envs.game_env import GameEnv, BatchEnv, EvalBatchEnv
 from clemcore.playpen.envs.branching_env import GameBranchingEnv
 
 __all__ = [
@@ -16,9 +16,8 @@ __all__ = [
     "RolloutProgressCallback",
     "CallbackList",
     "BasePlayPen",
-    "BasePlayPenMultiturn",
-    "BasePlayPenMultiturnTrajectory",
     "BatchRollout",
+    "EvalBatchRollout",
     "PlayPenEnv",
     "RolloutBuffer",
     "ReplayBuffer",
@@ -28,6 +27,7 @@ __all__ = [
     "BatchRolloutBuffer",
     "GameEnv",
     "BatchEnv",
+    "EvalBatchEnv",
     "GameBranchingEnv",
     "make_tree_env",
     "make_env",
@@ -61,3 +61,11 @@ def make_batch_env(game_spec: GameSpec, players: List[Model],
     with benchmark.load_from_spec(game_spec, do_setup=True, instances_filename=instances_name) as game:
         task_iterator = game.create_game_instance_iterator(shuffle_instances)
         yield BatchEnv(game, players, task_iterator, batch_size=batch_size)
+
+@contextmanager
+def make_eval_env(game_spec: GameSpec, players: List[Model],
+                   instances_name: str = None, shuffle_instances: bool = False, batch_size: int = 4):
+    
+    with benchmark.load_from_spec(game_spec, do_setup=True, instances_filename=instances_name) as game:
+        task_iterator = game.create_game_instance_iterator(shuffle_instances)
+        yield EvalBatchEnv(game, players, task_iterator, batch_size=batch_size)
