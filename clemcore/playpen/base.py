@@ -132,7 +132,7 @@ class BatchRollout:
                         rollout_buffer.drop_trajectory(env_id)
 
                     # Reset the environment
-                    game_env.env_reset(env_id)
+                    game_env.on_done(env_id)
             # Break the outer loop if the target number of trajectories is reached
             if collected_trajectories >= rollout_steps:
                 break
@@ -236,6 +236,7 @@ class EvalBatchRollout(BatchRollout):
             # Perform inference for teachers
             teacher_responses = self.teacher.batch_generate(teacher_inputs) if teacher_inputs else []
             self._update_player_context(teacher_env_ids, teacher_responses, observations)
+            print(f"Teacher resp: {len(teacher_responses)} --- Learner Resp: {len(learner_responses)}")
 
             # Combine responses for step processing
             responses = {env_id: response[2] for env_id, response in zip(learner_env_ids + teacher_env_ids, learner_responses + teacher_responses)}
@@ -261,8 +262,8 @@ class EvalBatchRollout(BatchRollout):
                                                                             rollout_buffer,
                                                                             collected_trajectories)
                     # Shut down the environment
-                    game_env.shutdown_env(env_id)
-
+                    game_env.on_done(env_id)
+                
 
         self.callbacks.on_rollout_end()
         game_env.reset_batch()
