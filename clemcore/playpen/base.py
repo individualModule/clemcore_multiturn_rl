@@ -277,6 +277,16 @@ class EvalBatchRollout(BatchRollout):
         rollout_buffer.reset_active_trajectories()
 
 
+    def _update_rollout_state(self, game_env, env_id, rollout_buffer, collected_trajectories):
+
+        single_env = game_env.get_env(env_id)
+        _ = rollout_buffer.on_done(env_id)
+        self.num_timesteps += 1
+        collected_trajectories += 1
+        self.callbacks.update_locals(locals())
+        self.callbacks.on_step(single_env)
+
+        return collected_trajectories
 
 
 
