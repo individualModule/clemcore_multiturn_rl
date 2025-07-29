@@ -344,16 +344,15 @@ def _process_rollout_metrics(trajectories):
         'rollout/avg_game_length': sum(game_length) / len(game_length) if game_length else 0,
         'rollout/min_episode_reward': min(total_episode_scores) if total_episode_scores else 0,
         'rollout/max_episode_reward': max(total_episode_scores) if total_episode_scores else 0,
-        'rollout/std_episode_reward': torch.std(torch.tensor(total_episode_scores)).item() if total_episode_scores else 0,
+        'rollout/std_episode_reward': torch.std(torch.tensor(total_episode_scores, dtype=torch.float32)).item() if total_episode_scores else 0,
         'rollout/min_turn_reward': min(total_response_scores) if total_response_scores else 0,
         'rollout/max_turn_reward': max(total_response_scores) if total_response_scores else 0,
-        'rollout/std_turn_reward': torch.std(torch.tensor(total_response_scores)).item() if total_response_scores else 0,
+        'rollout/std_turn_reward': torch.std(torch.tensor(total_response_scores, dtype=torch.float32)).item() if total_response_scores else 0,
         'rollout/min_accumulated_reward': min(per_episode_response_sum) if per_episode_response_sum else 0,
         'rollout/max_accumulated_reward': max(per_episode_response_sum) if per_episode_response_sum else 0,
-        'rollout/std_accumulated_reward': torch.std(torch.tensor(per_episode_response_sum)).item() if per_episode_response_sum else 0,
+        'rollout/std_accumulated_reward': torch.std(torch.tensor(per_episode_response_sum, dtype=torch.float32)).item() if per_episode_response_sum else 0,
         'rollout/min_game_length': min(game_length) if game_length else 0,
         'rollout/max_game_length': max(game_length) if game_length else 0,
-        'rollout/std_game_length': torch.std(torch.tensor(game_length)).item() if game_length else 0,
+        'rollout/std_game_length': torch.std(torch.tensor(game_length, dtype=torch.float32)).item() if game_length else 0,
     }
-
     return metrics
