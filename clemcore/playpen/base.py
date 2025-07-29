@@ -83,6 +83,7 @@ class BatchRollout:
             rollout_buffer: The buffer to store collected trajectories.
             eval: Whether this is an evaluation rollout (no buffer flattening).
         """
+        self.current_trajectories = []
         self.callbacks.on_rollout_start(game_env, self.num_timesteps)
 
         collected_trajectories = 0
@@ -141,7 +142,11 @@ class BatchRollout:
         self.callbacks.on_rollout_end()
         game_env.reset_batch()
         rollout_buffer.reset_active_trajectories()
+        rollout_metrics = _process_rollout_metrics(self.current_trajectories) # get rollout metrics
+        self.current_trajectories = [] # reset current trajectories to empty
 
+        return rollout_metrics
+    
     def _remaining_trajectories(self, rollout_steps, collected_trajectories):
         
         remaining = collected_trajectories - rollout_steps 
@@ -192,13 +197,15 @@ class BatchRollout:
     def _update_rollout_state(self, game_env, env_id, rollout_buffer, collected_trajectories):
 
         single_env = game_env.get_env(env_id)
-        rollout_buffer.on_done(env_id)
+        completed_trajectory = rollout_buffer.on_done(env_id)
         self.num_timesteps += 1
         collected_trajectories += 1
         self.callbacks.update_locals(locals())
         self.callbacks.on_step(single_env)
+        self.current_trajectories.append(completed_trajectory)
 
         return collected_trajectories
+
 
 
 
@@ -268,3 +275,65 @@ class EvalBatchRollout(BatchRollout):
         self.callbacks.on_rollout_end()
         game_env.reset_batch()
         rollout_buffer.reset_active_trajectories()
+
+
+
+
+
+
+def _process_rollout_metrics(trajectories):
+    """
+    Process trajectories to compute rollout metrics.
+    Args:
+        trajectories: List of trajectories collected during rollouts.
+    Returns:
+        A dictionary of computed metrics.
+    """
+    total_episode_scores = []
+    total_response_scores = []
+    per_episode_response_sum = []
+    game_length = []
+
+    success_count = 0
+    aborted_count = 0
+    lost_count = 0
+
+    for trajectory in trajectories:
+        if not trajectory:
+            continue
+        episode_score = 0
+        trajectory_response_sum = 0
+        game_length.append(len(trajectory))
+
+        for step in trajectory:
+            if step['done']:
+                response_score = step['info'].get('episode_score', 0)
+            else:
+                response_score = step['info'].get('response_score', 0)
+
+            total_response_scores.append(response_score)
+            trajectory_response_sum += response_score
+            episode_score = step['info'].get('episode_score', episode_score)
+
+        total_episode_scores.append(episode_score)
+        per_episode_response_sum.append(trajectory_response_sum)
+
+        instance_info = trajectory[-1]['info']
+        if instance_info['success']:
+            success_count += 1
+        elif instance_info['aborted']:
+            aborted_count += 1
+        elif instance_info['lost']:
+            lost_count += 1
+
+    metrics = {
+        'rollout/average_episode_reward': sum(total_episode_scores) / len(total_episode_scores) if total_episode_scores else 0,
+        'rollout/average_turn_reward': sum(total_response_scores) / len(total_response_scores) if total_response_scores else 0,
+        'rollout/average_accumulated_reward': sum(per_episode_response_sum) / len(per_episode_response_sum) if per_episode_response_sum else 0,
+        'rollout/success_count': success_count,
+        'rollout/aborted_count': aborted_count,
+        'rollout/lost_count': lost_count,
+        'rollout/avg_game_length': sum(game_length) / len(game_length) if game_length else 0
+    }
+
+    return metrics

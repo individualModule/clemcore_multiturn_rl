@@ -159,13 +159,16 @@ class BatchReplayBuffer(StepRolloutBuffer):
         Enforce buffer size by removing the oldest trajectories if necessary.
         """
         if env_id in self.active_trajectories:
-            self.trajectories.append(self.active_trajectories.pop(env_id))  # Move to completed trajectories.
+            completed_trajectory = self.active_trajectories.pop(env_id)
+            self.trajectories.append(completed_trajectory)  # Move to completed trajectories.
 
             # Enforce buffer size.
             excess_count = len(self.trajectories) - self.buffer_size
             if excess_count > 0:
                 self.trajectories = self.trajectories[excess_count:]  # Keep only the most recent trajectories.
-
+            
+            # return completed trajectory for further analysis
+            return completed_trajectory
     def drop_trajectory(self, env_id: int):
         """
         Drop the active trajectory for the given environment ID.
