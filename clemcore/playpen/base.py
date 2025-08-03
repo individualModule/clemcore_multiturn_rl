@@ -112,7 +112,6 @@ class BatchRollout:
                 done = result["done"]
                 info = result["info"]
                 player = observations[env_id]["player"]
-
                 # Add step to the rollout buffer only for the target player
                 if self.learner_name in player.name:
                     # print('here')
@@ -120,7 +119,14 @@ class BatchRollout:
                     
                 # If the environment is done, finalize the trajectory and reset
                 if done:
-                    if forPlayer in player.name:
+                    # drop llm responses that are empty strings
+                    # not sure what causes them - corrupt decoding process or just issue with llama
+                    if not responses[env_id] or responses[env_id].strip() == "":
+                        rollout_buffer.drop_trajectory(env_id)
+                        print(f"Empty response found: '{responses[env_id]}'")
+
+                    elif forPlayer in player.name:
+                            
                         collected_trajectories = self._update_rollout_state(game_env,
                                                                             env_id,
                                                                             rollout_buffer,
