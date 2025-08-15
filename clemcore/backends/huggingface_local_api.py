@@ -55,7 +55,7 @@ def load_config_and_tokenizer(model_spec: backends.ModelSpec) -> Tuple[AutoToken
     if 'slow_tokenizer' in model_spec.model_config:
         if model_spec['model_config']['slow_tokenizer']:
             tokenizer = AutoTokenizer.from_pretrained(hf_model_str, device_map="auto", torch_dtype="auto",
-                                                      verbose=False, use_fast=False)
+                                                      verbose=False, use_fast=False, local_files_only=True)
         else:
             tokenizer = None
             slow_tokenizer_info = (f"{model_spec['model_name']} registry setting has slow_tokenizer, "
@@ -64,10 +64,10 @@ def load_config_and_tokenizer(model_spec: backends.ModelSpec) -> Tuple[AutoToken
             logger.info(slow_tokenizer_info)
     elif use_api_key:
         tokenizer = AutoTokenizer.from_pretrained(hf_model_str, token=api_key, device_map="auto",
-                                                  torch_dtype="auto", verbose=False)
+                                                  torch_dtype="auto", verbose=False, local_files_only=True)
     else:
         tokenizer = AutoTokenizer.from_pretrained(hf_model_str, device_map="auto", torch_dtype="auto",
-                                                  verbose=False)
+                                                  verbose=False, local_files_only=True)
 
     # apply proper chat template:
     if not model_spec['model_config']['premade_chat_template']:
@@ -112,7 +112,7 @@ def load_model(model_spec: backends.ModelSpec) -> Any:
     """
     logger.info(f'Start loading huggingface model weights: {model_spec.model_name}')
 
-    model_args = dict(device_map="auto", torch_dtype="auto")
+    model_args = dict(device_map="auto", torch_dtype="auto", local_files_only=True)
     if "load_in_8bit" in model_spec.model_config:
         model_args["load_in_8bit"] = model_spec.model_config["load_in_8bit"]
     if "load_in_4bit" in model_spec.model_config:
