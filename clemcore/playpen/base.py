@@ -20,7 +20,7 @@ class BasePlayPen(abc.ABC):
     def add_callback(self, callback: BaseCallback):
         self.callbacks.append(callback)
 
-    def _collect_rollouts(self, game_env: PlayPenEnv, rollout_steps: int, rollout_buffer: RolloutBuffer):
+    def _collect_rollouts(self, game_env: PlayPenEnv, rollout_steps: int, rollout_buffer: RolloutBuffer, device):
         # reset() sets up the next game instance;
         # we should notify somehow when all instances were run so users can intervene if wanted?
         self.callbacks.on_rollout_start(game_env, self.num_timesteps)
@@ -73,6 +73,7 @@ class BatchRollout:
                         rollout_steps: int,
                         rollout_buffer: Union[BatchRolloutBuffer, BatchReplayBuffer],
                         forPlayer="Player 2",
+                        device=None
                         ):
         """
         Collect rollouts using the BatchEnv, synchronizing turns for learner and teacher.
@@ -83,24 +84,31 @@ class BatchRollout:
             rollout_buffer: The buffer to store collected trajectories.
             eval: Whether this is an evaluation rollout (no buffer flattening).
         """
+        print('we are in')
         self.current_trajectories = []
         self.callbacks.on_rollout_start(game_env, self.num_timesteps)
 
         collected_trajectories = 0
         while collected_trajectories < rollout_steps:
             # game_env.align(self._remaining_trajectories(collected_trajectories, rollout_steps))  # Shut down surplus environments
+            print('we are in 2')
 
             # Collect observations from all active environments
             observations = game_env.observe()
+            print('we are in 3')
 
             # Separate observations by player type
             learner_inputs, learner_env_ids, teacher_inputs, teacher_env_ids = self._separate_inputs(observations)
+            print('we are in 4')
 
             # Perform inference for learners
-            learner_responses = self.learner.batch_generate(learner_inputs) if learner_inputs else []
+            learner_responses = self.learner.batch_generate(learner_inputs, device = device) if learner_inputs else []
+            print('we are in 5')
+
             self._update_player_context(learner_env_ids, learner_responses, observations)
             # Perform inference for teachers
-            teacher_responses = self.teacher.batch_generate(teacher_inputs) if teacher_inputs else []
+            teacher_responses = self.teacher.batch_generate(teacher_inputs, device=device) if teacher_inputs else []
+            print('we are in 6')
             self._update_player_context(teacher_env_ids, teacher_responses, observations)
             print(f"Teacher resp: {len(teacher_responses)} --- Learner Resp: {len(learner_responses)}")
             # Combine responses for step processing
@@ -221,6 +229,7 @@ class EvalBatchRollout(BatchRollout):
     def _collect_rollouts(self, game_env: PlayPenEnv,
                           rollout_buffer: Union[BatchRolloutBuffer, BatchReplayBuffer],
                           forPlayer="Player 2",
+                          device=None
                           ):
         """
         Collect rollouts using the EvalBatchEnv, iterating over the entire queue.
@@ -243,11 +252,11 @@ class EvalBatchRollout(BatchRollout):
             learner_inputs, learner_env_ids, teacher_inputs, teacher_env_ids = self._separate_inputs(observations)
 
             # Perform inference for learners
-            learner_responses = self.learner.batch_generate(learner_inputs) if learner_inputs else []
+            learner_responses = self.learner.batch_generate(learner_inputs, device=device) if learner_inputs else []
             self._update_player_context(learner_env_ids, learner_responses, observations)
 
             # Perform inference for teachers
-            teacher_responses = self.teacher.batch_generate(teacher_inputs) if teacher_inputs else []
+            teacher_responses = self.teacher.batch_generate(teacher_inputs, device=device) if teacher_inputs else []
             self._update_player_context(teacher_env_ids, teacher_responses, observations)
             print(f"Teacher resp: {len(teacher_responses)} --- Learner Resp: {len(learner_responses)}")
 

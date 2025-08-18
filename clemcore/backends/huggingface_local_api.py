@@ -54,7 +54,7 @@ def load_config_and_tokenizer(model_spec: backends.ModelSpec) -> Tuple[AutoToken
     # use 'slow' tokenizer for models that require it:
     if 'slow_tokenizer' in model_spec.model_config:
         if model_spec['model_config']['slow_tokenizer']:
-            tokenizer = AutoTokenizer.from_pretrained(hf_model_str, device_map="auto", torch_dtype="auto",
+            tokenizer = AutoTokenizer.from_pretrained(hf_model_str, torch_dtype="auto",
                                                       verbose=False, use_fast=False, local_files_only=True)
         else:
             tokenizer = None
@@ -63,10 +63,10 @@ def load_config_and_tokenizer(model_spec: backends.ModelSpec) -> Tuple[AutoToken
             print(slow_tokenizer_info)
             logger.info(slow_tokenizer_info)
     elif use_api_key:
-        tokenizer = AutoTokenizer.from_pretrained(hf_model_str, token=api_key, device_map="auto",
+        tokenizer = AutoTokenizer.from_pretrained(hf_model_str, token=api_key, 
                                                   torch_dtype="auto", verbose=False, local_files_only=True)
     else:
-        tokenizer = AutoTokenizer.from_pretrained(hf_model_str, device_map="auto", torch_dtype="auto",
+        tokenizer = AutoTokenizer.from_pretrained(hf_model_str, torch_dtype="auto",
                                                   verbose=False, local_files_only=True)
 
     # apply proper chat template:
@@ -112,7 +112,7 @@ def load_model(model_spec: backends.ModelSpec) -> Any:
     """
     logger.info(f'Start loading huggingface model weights: {model_spec.model_name}')
 
-    model_args = dict(device_map="auto", torch_dtype="auto", local_files_only=True)
+    model_args = dict( torch_dtype="auto", local_files_only=True)
     if "load_in_8bit" in model_spec.model_config:
         model_args["load_in_8bit"] = model_spec.model_config["load_in_8bit"]
     if "load_in_4bit" in model_spec.model_config:
@@ -131,7 +131,7 @@ def load_model(model_spec: backends.ModelSpec) -> Any:
         model = PeftModel.from_pretrained(model, adapter_model)
 
     logger.info(f"Finished loading huggingface model: {model_spec.model_name}")
-    logger.info(f"Model device map: {model.hf_device_map}")
+    # logger.info(f"Model device map: {model.hf_device_map}")
 
     return model
 
@@ -212,7 +212,8 @@ class HuggingfaceLocalModel(backends.Model):
 
     def generate_action_and_logprobs(self,
                                     observations: Union[List[dict], List[List[dict]]],
-                                    return_logprobs = True
+                                    return_logprobs = True,
+                                    device = None
                                     ) -> Tuple[List[List[dict]], torch.Tensor]:
         """
         https://huggingface.co/blog/the_n_implementation_details_of_rlhf_with_ppo
@@ -227,6 +228,9 @@ class HuggingfaceLocalModel(backends.Model):
                 - Generated actions in the format List[List[dict]].
                 - Log probabilities of the generated actions as a torch.Tensor.
         """
+        if device is None:
+            device = self.device
+
         eos_token_id = self.tokenizer.eos_token_id
         pad_token_id = self.tokenizer.pad_token_id
         
@@ -238,7 +242,7 @@ class HuggingfaceLocalModel(backends.Model):
         # print()
         # Apply chat template and tokenize observations
         obs_template = self.tokenizer.apply_chat_template(observations, add_generation_prompt=True, tokenize=False)
-        obs_tokens = self.tokenizer(obs_template, padding=True, truncation=True, return_tensors="pt").to(self.device)
+        obs_tokens = self.tokenizer(obs_template, padding=True, truncation=True, return_tensors="pt").to(device)
 
         # Greedy decoding or sampling
         do_sample: bool = False
@@ -326,7 +330,7 @@ class HuggingfaceLocalModel(backends.Model):
 
         return actions, logprobs
 
-    def batch_generate(self, batch_messages: List[List[Dict]], return_full_text: bool = False, log_messages: bool = False):
+    def batch_generate(self, batch_messages: List[List[Dict]], return_full_text: bool = False, log_messages: bool = False, device=None):
         """
         Generate responses for a batch of message histories.
 
@@ -343,6 +347,12 @@ class HuggingfaceLocalModel(backends.Model):
         """
         # Ensure batch_messages is a list of lists
         # print(f"Input batch_messages: {batch_messages}")
+        print(f'passed device: {device}')
+        print('entered batch gen')
+        print(f"Model device: {next(self.model.parameters()).device}")
+        if device is None:
+            device = self.device
+        self.model.to(device)
         assert isinstance(batch_messages, list) and all(isinstance(messages, list) for messages in batch_messages), \
             "batch_messages must be a list of message histories (lists of dictionaries)."
 
@@ -353,6 +363,7 @@ class HuggingfaceLocalModel(backends.Model):
 
         # Flatten and clean messages for each batch
         batch_cleaned_messages = [ensure_alternating_roles(messages) for messages in batch_messages]
+        print(f"Cleaned batch size: {len(batch_cleaned_messages)}")
 
         # Log cleaned messages if requested
         if log_messages:
@@ -361,7 +372,9 @@ class HuggingfaceLocalModel(backends.Model):
 
         # Apply chat template and tokenize for the batch
         batch_prompt_template = self.tokenizer.apply_chat_template(batch_cleaned_messages, add_generation_prompt=True, tokenize=False)
-        batch_prompt_tokens = self.tokenizer(batch_prompt_template, padding=True, truncation=True, return_tensors="pt").to(self.device)
+        print("Applied chat template")
+
+        batch_prompt_tokens = self.tokenizer(batch_prompt_template, padding=True, truncation=True, return_tensors="pt").to(device)
 
         # Decode the prompts for logging
         batch_prompt_texts = self.tokenizer.batch_decode(batch_prompt_tokens["input_ids"], skip_special_tokens=True)
@@ -387,11 +400,12 @@ class HuggingfaceLocalModel(backends.Model):
             "do_sample": do_sample,
             "temperature": self.get_temperature() if do_sample else None
         }
+        print("Calling model.generate")
         batch_model_output_ids = self.model.generate(**generate_kwargs)
-
+        print('gen done')
         # Decode the generated outputs
         batch_model_outputs = self.tokenizer.batch_decode(batch_model_output_ids, skip_special_tokens=True)
-
+        print('decoding')
         # Prepare the responses
         batch_responses = []
         for i, model_output in enumerate(batch_model_outputs):
