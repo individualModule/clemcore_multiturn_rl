@@ -352,7 +352,7 @@ class HuggingfaceLocalModel(backends.Model):
         print(f"Model device: {next(self.model.parameters()).device}")
         if device is None:
             device = self.device
-        self.model.to(device)
+        # self.model.to(device)
         assert isinstance(batch_messages, list) and all(isinstance(messages, list) for messages in batch_messages), \
             "batch_messages must be a list of message histories (lists of dictionaries)."
 
