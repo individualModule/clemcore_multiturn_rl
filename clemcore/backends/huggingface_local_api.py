@@ -292,15 +292,15 @@ class HuggingfaceLocalModel(backends.Model):
 
 
 
-        log_data = {
-            'function': 'generate_action_and_logprobs',
-            'batch_size': len(observations),
-            'input_tokens': obs_tokens['input_ids'],
-            'output_tokens': completion_ids,
-            'responses': [action[0]['content'] for action in actions],
-            'raw_outputs': full_outputs
-        }
-        log_training_data('actions_logprobs.pkl', log_data)
+        # log_data = {
+        #     'function': 'generate_action_and_logprobs',
+        #     'batch_size': len(observations),
+        #     'input_tokens': obs_tokens['input_ids'],
+        #     'output_tokens': completion_ids,
+        #     'responses': [action[0]['content'] for action in actions],
+        #     'raw_outputs': full_outputs
+        # }
+        # log_training_data('actions_logprobs.pkl', log_data)
 
 
         # print('---------------------')
@@ -435,16 +435,16 @@ class HuggingfaceLocalModel(backends.Model):
         # for response in batch_responses:
         #     print(response[2])  # Print only the response_text
 
-        log_data = {
-            'function': 'batch_generate',
-            'batch_size': len(batch_messages),
-            'responses': [resp[2] for resp in batch_responses],
-            'raw_outputs': batch_model_outputs,
-            'input_tokens': batch_prompt_tokens["input_ids"],
-            'output_tokens': batch_model_output_ids,
-            'inputs': batch_messages
-        }
-        log_training_data('training_logs.pkl', log_data)
+        # log_data = {
+        #     'function': 'batch_generate',
+        #     'batch_size': len(batch_messages),
+        #     'responses': [resp[2] for resp in batch_responses],
+        #     'raw_outputs': batch_model_outputs,
+        #     'input_tokens': batch_prompt_tokens["input_ids"],
+        #     'output_tokens': batch_model_output_ids,
+        #     'inputs': batch_messages
+        # }
+        # log_training_data('training_logs.pkl', log_data)
 
         return batch_responses
 
