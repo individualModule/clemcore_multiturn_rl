@@ -346,7 +346,7 @@ class HuggingfaceLocalModel(backends.Model):
 
         return actions, logprobs
 
-    def batch_generate(self, batch_messages: List[List[Dict]], return_full_text: bool = False, log_messages: bool = False):
+    def batch_generate(self, batch_messages: List[List[Dict]], return_full_text: bool = False, log_messages: bool = True):
         """
         Generate responses for a batch of message histories.
 
@@ -430,7 +430,7 @@ class HuggingfaceLocalModel(backends.Model):
 
             # Log the response if requested
             if log_messages:
-                logger.info(f"Response for batch {i}: {response_text}")
+                logger.info(f"Raw Response for batch {i}: {response_text}")
         # print("Output batch_responses (response_text only):")
         # for response in batch_responses:
         #     print(response[2])  # Print only the response_text
