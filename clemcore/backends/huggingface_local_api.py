@@ -9,6 +9,10 @@ import re
 from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig, StaticCache
 from peft import PeftModel
 from jinja2 import TemplateError
+import os 
+from datetime import datetime
+import json
+import pickle
 
 import clemcore.backends as backends
 from clemcore.backends.utils import ensure_alternating_roles
@@ -270,11 +274,12 @@ class HuggingfaceLocalModel(backends.Model):
                                             completion_mask)
             
         actions = []
-
+        full_outputs = []
         for i, (text, generated_id_seq) in enumerate(zip(generated_texts, completion_ids)):
             # Remove special tokens from the generated text
             prompt_text = self.tokenizer.decode(obs_tokens['input_ids'][i], skip_special_tokens=True).strip()
             response_text = text.replace(prompt_text, '').strip()
+            full_outputs.append(response_text)
             if 'output_split_prefix' in self.model_spec.model_config:
                 response_text = response_text.rsplit(self.model_spec['model_config']['output_split_prefix'], maxsplit=1)[1]
 
@@ -282,6 +287,21 @@ class HuggingfaceLocalModel(backends.Model):
             response_text = re.sub(eos_to_cull, "", response_text)
 
             actions.append([{"role": "assistant", "content": response_text}])
+
+
+
+
+
+        log_data = {
+            'function': 'generate_action_and_logprobs',
+            'batch_size': len(observations),
+            'input_tokens': obs_tokens['input_ids'],
+            'output_tokens': completion_ids,
+            'responses': [action[0]['content'] for action in actions],
+            'raw_outputs': full_outputs
+        }
+        log_training_data('actions_logprobs.pkl', log_data)
+
 
         # print('---------------------')
         # print(len(actions))
@@ -414,6 +434,17 @@ class HuggingfaceLocalModel(backends.Model):
         # print("Output batch_responses (response_text only):")
         # for response in batch_responses:
         #     print(response[2])  # Print only the response_text
+
+        log_data = {
+            'function': 'batch_generate',
+            'batch_size': len(batch_messages),
+            'responses': [resp[2] for resp in batch_responses],
+            'raw_outputs': batch_model_outputs,
+            'input_tokens': batch_prompt_tokens["input_ids"],
+            'output_tokens': batch_model_output_ids,
+            'inputs': batch_messages
+        }
+        log_training_data('training_logs.pkl', log_data)
 
         return batch_responses
 
@@ -712,3 +743,23 @@ def first_true_indices(bools: torch.Tensor, dtype=torch.long):
     row_len = bools.size(-1)
     zero_or_index = row_len * (~bools).type(dtype) + torch.arange(row_len, dtype=dtype, device=bools.device)
     return torch.min(zero_or_index, dim=-1).values
+
+def log_training_data(filename: str, data: dict) -> None:
+    """Log training data to pickle file (much more efficient than JSON)."""
+    # Force the log directory to the specified path
+    log_dir = "/home/users/dristic/project/Archer/llm_training_log"
+    full_path = os.path.join(log_dir, filename)
+    
+    os.makedirs(log_dir, exist_ok=True)
+    
+    try:
+        with open(full_path, 'rb') as f:
+            logs = pickle.load(f)
+    except (FileNotFoundError, EOFError):
+        logs = []
+    
+    data['timestamp'] = datetime.now().isoformat()
+    logs.append(data)
+    
+    with open(full_path, 'wb') as f:
+        pickle.dump(logs, f)
