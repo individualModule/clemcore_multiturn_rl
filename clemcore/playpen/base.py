@@ -73,6 +73,7 @@ class BatchRollout:
                         rollout_steps: int,
                         rollout_buffer: Union[BatchRolloutBuffer, BatchReplayBuffer],
                         forPlayer="Player 2",
+                        accelerator = None
                         ):
         """
         Collect rollouts using the BatchEnv, synchronizing turns for learner and teacher.
@@ -97,10 +98,14 @@ class BatchRollout:
             learner_inputs, learner_env_ids, teacher_inputs, teacher_env_ids = self._separate_inputs(observations)
 
             # Perform inference for learners
+            # learner_responses = self.accelerator.unwrap_model(self.learner.model).batch_generate(learner_inputs) if learner_inputs else []
             learner_responses = self.learner.batch_generate(learner_inputs) if learner_inputs else []
+
             self._update_player_context(learner_env_ids, learner_responses, observations)
             # Perform inference for teachers
+            # teacher_responses = self.accelerator.unwrap_model(self.teacher.model).batch_generate(teacher_inputs) if teacher_inputs else []
             teacher_responses = self.teacher.batch_generate(teacher_inputs) if teacher_inputs else []
+
             self._update_player_context(teacher_env_ids, teacher_responses, observations)
             print(f"Teacher resp: {len(teacher_responses)} --- Learner Resp: {len(learner_responses)}")
             # Combine responses for step processing
@@ -221,6 +226,7 @@ class EvalBatchRollout(BatchRollout):
     def _collect_rollouts(self, game_env: PlayPenEnv,
                           rollout_buffer: Union[BatchRolloutBuffer, BatchReplayBuffer],
                           forPlayer="Player 2",
+                          accelerator=None
                           ):
         """
         Collect rollouts using the EvalBatchEnv, iterating over the entire queue.
@@ -243,11 +249,16 @@ class EvalBatchRollout(BatchRollout):
             learner_inputs, learner_env_ids, teacher_inputs, teacher_env_ids = self._separate_inputs(observations)
 
             # Perform inference for learners
+            # learner_responses = accelerator.unwrap_model(self.learner.model).batch_generate(learner_inputs) if learner_inputs else []
             learner_responses = self.learner.batch_generate(learner_inputs) if learner_inputs else []
+    
+            
             self._update_player_context(learner_env_ids, learner_responses, observations)
 
             # Perform inference for teachers
+            # teacher_responses = accelerator.unwrap_model(self.teacher.model).batch_generate(teacher_inputs) if teacher_inputs else []
             teacher_responses = self.teacher.batch_generate(teacher_inputs) if teacher_inputs else []
+
             self._update_player_context(teacher_env_ids, teacher_responses, observations)
             print(f"Teacher resp: {len(teacher_responses)} --- Learner Resp: {len(learner_responses)}")
 
