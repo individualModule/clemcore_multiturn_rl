@@ -3,6 +3,7 @@ Uses HF tokenizers instruct/chat templates for proper input format per model.
 """
 from dataclasses import dataclass
 import logging
+
 from typing import List, Dict, Tuple, Any, Union
 import torch
 import re
@@ -111,8 +112,10 @@ def load_model(model_spec: backends.ModelSpec) -> Any:
         The transformers model class instance of the loaded model.
     """
     logger.info(f'Start loading huggingface model weights: {model_spec.model_name}')
+    # accelerate only wirks with no device map
+    #model_args = dict(device_map="auto", torch_dtype="auto")
+    model_args = dict(device_map=None, torch_dtype="auto")
 
-    model_args = dict(device_map="auto", torch_dtype="auto")
     if "load_in_8bit" in model_spec.model_config:
         model_args["load_in_8bit"] = model_spec.model_config["load_in_8bit"]
     if "load_in_4bit" in model_spec.model_config:
@@ -131,7 +134,7 @@ def load_model(model_spec: backends.ModelSpec) -> Any:
         model = PeftModel.from_pretrained(model, adapter_model)
 
     logger.info(f"Finished loading huggingface model: {model_spec.model_name}")
-    logger.info(f"Model device map: {model.hf_device_map}")
+    # logger.info(f"Model device map: {model.hf_device_map}")
 
     return model
 
@@ -174,7 +177,7 @@ class HuggingfaceLocalModel(backends.Model):
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
 
-    def calculate_logprobs(self, prompt_ids, prompt_mask, completion_ids, completion_mask):
+    def calculate_logprobs(self, prompt_ids, prompt_mask, completion_ids, completion_mask, accelerator):
         """
         Inspired by the _forward class in TRL online DPO trainer. 
         Double forward pass to obtain logprobs: 
@@ -197,7 +200,7 @@ class HuggingfaceLocalModel(backends.Model):
         prompt_completion_mask = torch.cat((prompt_mask, completion_mask), dim=1)
 
         # Forward pass through the model
-        output = self.model(prompt_completion_ids, attention_mask=prompt_completion_mask)
+        output = accelerator.unwrap_model(self.model)(prompt_completion_ids, attention_mask=prompt_completion_mask)
 
         # There is 1 offset because the model predicts the next token
         logits = output.logits[:, prompt_ids.size(1) - 1 : -1]
@@ -212,7 +215,8 @@ class HuggingfaceLocalModel(backends.Model):
 
     def generate_action_and_logprobs(self,
                                     observations: Union[List[dict], List[List[dict]]],
-                                    return_logprobs = True
+                                    return_logprobs = True,
+                                    accelerator = None
                                     ) -> Tuple[List[List[dict]], torch.Tensor]:
         """
         https://huggingface.co/blog/the_n_implementation_details_of_rlhf_with_ppo
@@ -256,7 +260,7 @@ class HuggingfaceLocalModel(backends.Model):
         if do_sample:
             generate_kwargs["temperature"] = self.get_temperature()
 
-        outputs = self.model.generate(**generate_kwargs) # custom generation fn to get logprobs
+        outputs = accelerator.unwrap_model(self.model).generate(**generate_kwargs) # custom generation fn to get logprobs
         # Extract generated token IDs
         completion_ids = outputs.sequences[:, obs_tokens['input_ids'].size(1):]
         completion_ids, completion_mask = truncate_right(completion_ids, eos_token_id, pad_token_id)
@@ -267,7 +271,8 @@ class HuggingfaceLocalModel(backends.Model):
             logprobs = self.calculate_logprobs(obs_tokens['input_ids'],
                                             obs_tokens['attention_mask'],
                                             completion_ids,
-                                            completion_mask)
+                                            completion_mask, 
+                                            accelerator=accelerator)
             
         actions = []
 
@@ -326,7 +331,7 @@ class HuggingfaceLocalModel(backends.Model):
 
         return actions, logprobs
 
-    def batch_generate(self, batch_messages: List[List[Dict]], return_full_text: bool = False, log_messages: bool = False):
+    def batch_generate(self, batch_messages: List[List[Dict]], return_full_text: bool = False, log_messages: bool = False, accelerator=None):
         """
         Generate responses for a batch of message histories.
 
@@ -387,7 +392,7 @@ class HuggingfaceLocalModel(backends.Model):
             "do_sample": do_sample,
             "temperature": self.get_temperature() if do_sample else None
         }
-        batch_model_output_ids = self.model.generate(**generate_kwargs)
+        batch_model_output_ids = accelerator.unwrap_model(self.model).generate(**generate_kwargs)
 
         # Decode the generated outputs
         batch_model_outputs = self.tokenizer.batch_decode(batch_model_output_ids, skip_special_tokens=True)

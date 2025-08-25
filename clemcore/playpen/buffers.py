@@ -252,6 +252,7 @@ class BatchReplayBuffer(StepRolloutBuffer):
             data = pickle.load(f)
         self.trajectories = data["trajectories"]
         self.active_trajectories = data["active_trajectories"]
+        self.flatten_steps()
         print(f"Buffer loaded from {file_path}")
 
 

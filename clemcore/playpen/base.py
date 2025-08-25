@@ -86,6 +86,11 @@ class BatchRollout:
         """
         self.current_trajectories = []
         self.callbacks.on_rollout_start(game_env, self.num_timesteps)
+        if accelerator is None:
+            if self.accelerator is None:
+                raise ValueError('neither self.acc nor acc exist')
+            else:
+                raise ValueError("Accelerator instance must be provided for distributed training.")
 
         collected_trajectories = 0
         while collected_trajectories < rollout_steps:
@@ -99,12 +104,12 @@ class BatchRollout:
 
             # Perform inference for learners
             # learner_responses = self.accelerator.unwrap_model(self.learner.model).batch_generate(learner_inputs) if learner_inputs else []
-            learner_responses = self.learner.batch_generate(learner_inputs) if learner_inputs else []
+            learner_responses = self.learner.batch_generate(learner_inputs, accelerator=accelerator) if learner_inputs else []
 
             self._update_player_context(learner_env_ids, learner_responses, observations)
             # Perform inference for teachers
             # teacher_responses = self.accelerator.unwrap_model(self.teacher.model).batch_generate(teacher_inputs) if teacher_inputs else []
-            teacher_responses = self.teacher.batch_generate(teacher_inputs) if teacher_inputs else []
+            teacher_responses = self.teacher.batch_generate(teacher_inputs, accelerator=accelerator) if teacher_inputs else []
 
             self._update_player_context(teacher_env_ids, teacher_responses, observations)
             print(f"Teacher resp: {len(teacher_responses)} --- Learner Resp: {len(learner_responses)}")
@@ -239,6 +244,7 @@ class EvalBatchRollout(BatchRollout):
             eval: Whether this is an evaluation rollout (default is True).
         """
         self.callbacks.on_rollout_start(game_env, self.num_timesteps)
+        print(accelerator)
 
         collected_trajectories = 0
         while not game_env.is_done():
@@ -250,14 +256,14 @@ class EvalBatchRollout(BatchRollout):
 
             # Perform inference for learners
             # learner_responses = accelerator.unwrap_model(self.learner.model).batch_generate(learner_inputs) if learner_inputs else []
-            learner_responses = self.learner.batch_generate(learner_inputs) if learner_inputs else []
+            learner_responses = self.learner.batch_generate(learner_inputs, accelerator=accelerator) if learner_inputs else []
     
             
             self._update_player_context(learner_env_ids, learner_responses, observations)
 
             # Perform inference for teachers
             # teacher_responses = accelerator.unwrap_model(self.teacher.model).batch_generate(teacher_inputs) if teacher_inputs else []
-            teacher_responses = self.teacher.batch_generate(teacher_inputs) if teacher_inputs else []
+            teacher_responses = self.teacher.batch_generate(teacher_inputs, accelerator=accelerator) if teacher_inputs else []
 
             self._update_player_context(teacher_env_ids, teacher_responses, observations)
             print(f"Teacher resp: {len(teacher_responses)} --- Learner Resp: {len(learner_responses)}")
