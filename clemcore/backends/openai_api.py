@@ -149,7 +149,7 @@ class OpenAIModel(backends.Model):
         return prompt, response, response_text
 
 
-    def batch_generate(self, batch_messages: List[List[Dict]]) -> List[Tuple[Any, Any, str]]:
+    def batch_generate(self, batch_messages: List[List[Dict]], **kwargs) -> List[Tuple[Any, Any, str]]:
         """
         Generate responses for a batch of message histories.
 
