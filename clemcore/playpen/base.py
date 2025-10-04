@@ -263,7 +263,7 @@ class EvalBatchRollout(BatchRollout):
 
             # Perform inference for teachers
             # teacher_responses = accelerator.unwrap_model(self.teacher.model).batch_generate(teacher_inputs) if teacher_inputs else []
-            teacher_responses = self.teacher.batch_generate(teacher_inputs, accelerator=accelerator) if teacher_inputs else []
+            teacher_responses = self.teacher.batch_generate(teacher_inputs, accelerator=accelerator, temp=0) if teacher_inputs else []
 
             self._update_player_context(teacher_env_ids, teacher_responses, observations)
             print(f"Teacher resp: {len(teacher_responses)} --- Learner Resp: {len(learner_responses)}")
@@ -291,6 +291,9 @@ class EvalBatchRollout(BatchRollout):
                                                                             env_id,
                                                                             rollout_buffer,
                                                                             collected_trajectories)
+                        
+                    print("----")
+                    print(f"Done on Player: {player}")
                     # Shut down the environment
                     game_env.on_done(env_id)
                 

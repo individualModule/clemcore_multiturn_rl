@@ -149,7 +149,7 @@ class OpenAIModel(backends.Model):
         return prompt, response, response_text
 
 
-    def batch_generate(self, batch_messages: List[List[Dict]], **kwargs) -> List[Tuple[Any, Any, str]]:
+    def batch_generate(self, batch_messages: List[List[Dict]],  **kwargs) -> List[Tuple[Any, Any, str]]:
         """
         Generate responses for a batch of message histories.
 
@@ -175,6 +175,13 @@ class OpenAIModel(backends.Model):
                 - The response object containing metadata.
                 - The generated response text.
         """
+        if 'temp' in kwargs:
+            # temp is present in kwargs
+            temperature = kwargs['temp']
+        else:
+            # temp is not present, use default
+            temperature = self.get_temperature()
+        print(f"Temperture: {temperature}")
         batch_prompts = [self.encode_messages(messages) for messages in batch_messages]
         responses = []
 
@@ -183,13 +190,13 @@ class OpenAIModel(backends.Model):
                 api_response = self.client.chat.completions.create(
                     model=self.model_spec.model_id,
                     messages=prompt,
-                    temperature=1
+                    temperature=temperature
                 )
             else:
                 api_response = self.client.chat.completions.create(
                     model=self.model_spec.model_id,
                     messages=prompt,
-                    temperature=self.get_temperature(),
+                    temperature=temperature,
                     max_tokens=self.get_max_tokens()
                 )
 
