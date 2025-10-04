@@ -147,3 +147,58 @@ class OpenAIModel(backends.Model):
         response = json.loads(api_response.json())
 
         return prompt, response, response_text
+
+
+    def batch_generate(self, batch_messages: List[List[Dict]]) -> List[Tuple[Any, Any, str]]:
+        """
+        Generate responses for a batch of message histories.
+
+        Args:
+            batch_messages: A batch of message histories. Each message history is a list of dictionaries.
+                Example:
+                [
+                    [
+                        {"role": "system", "content": "You are a helpful assistant."},
+                        {"role": "user", "content": "Who won the world series in 2020?"},
+                        {"role": "assistant", "content": "The Los Angeles Dodgers won the World Series in 2020."},
+                        {"role": "user", "content": "Where was it played?"}
+                    ],
+                    [
+                        {"role": "system", "content": "You are a helpful assistant."},
+                        {"role": "user", "content": "Tell me a joke."}
+                    ]
+                ]
+
+        Returns:
+            A list of tuples, where each tuple contains:
+                - The prompt used for generation.
+                - The response object containing metadata.
+                - The generated response text.
+        """
+        batch_prompts = [self.encode_messages(messages) for messages in batch_messages]
+        responses = []
+
+        for prompt in batch_prompts:
+            if 'reasoning_model' in self.model_spec.model_config:
+                api_response = self.client.chat.completions.create(
+                    model=self.model_spec.model_id,
+                    messages=prompt,
+                    temperature=1
+                )
+            else:
+                api_response = self.client.chat.completions.create(
+                    model=self.model_spec.model_id,
+                    messages=prompt,
+                    temperature=self.get_temperature(),
+                    max_tokens=self.get_max_tokens()
+                )
+
+            message = api_response.choices[0].message
+            if message.role != "assistant":  # safety check
+                raise AttributeError("Response message role is " + message.role + " but should be 'assistant'")
+            response_text = message.content.strip()
+            response = json.loads(api_response.json())
+
+            responses.append((prompt, response, response_text))
+
+        return responses
