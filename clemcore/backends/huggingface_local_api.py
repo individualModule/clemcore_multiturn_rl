@@ -10,6 +10,7 @@ import re
 from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig, StaticCache
 from peft import PeftModel
 from jinja2 import TemplateError
+import numpy as np
 
 import clemcore.backends as backends
 from clemcore.backends.utils import ensure_alternating_roles
@@ -184,7 +185,6 @@ class HuggingfaceLocalModel(backends.Model):
         1 - generate() to get completions
         2 - forward pass to get logprobs
 
-
         The padded tokens (based on completion mask) are assigned logprob 0 so they don't impact the loss
         """    
 
@@ -213,6 +213,7 @@ class HuggingfaceLocalModel(backends.Model):
 
         return logprobs
 
+
     def generate_action_and_logprobs(self,
                                     observations: Union[List[dict], List[List[dict]]],
                                     return_logprobs = True,
@@ -231,18 +232,25 @@ class HuggingfaceLocalModel(backends.Model):
                 - Generated actions in the format List[List[dict]].
                 - Log probabilities of the generated actions as a torch.Tensor.
         """
+
+        self.tokenizer.pad_token_id = 128004 # remove to use the default token -> this one is special for llama, not necessarily accurate.
+        self.model.generation_config.pad_token_id = 128004
         eos_token_id = self.tokenizer.eos_token_id
         pad_token_id = self.tokenizer.pad_token_id
+                
+        self.tokenizer.padding_side = 'left'
+        print(f"PADDING SIDE: {self.tokenizer.padding_side}")
+        print(f"PAD TOKEN ID (tokenizer): {self.tokenizer.pad_token_id}")
+        print(f"PAD TOKEN ID (model config): {self.model.generation_config.pad_token_id}")  # ← ADD THIS
+        print(f"EOS TOKEN ID: {eos_token_id}")
         
         # Ensure observations are in batch format
         if isinstance(observations[0], dict):
             observations = [observations]  # Wrap single observation in a list
-        # print()
-        # print(observations)
-        # print()
+
         # Apply chat template and tokenize observations
         obs_template = self.tokenizer.apply_chat_template(observations, add_generation_prompt=True, tokenize=False)
-        obs_tokens = self.tokenizer(obs_template, padding=True, truncation=True, return_tensors="pt").to(self.device)
+        obs_tokens = self.tokenizer(obs_template, padding=True, truncation=True, return_tensors="pt", add_special_tokens=False).to(self.device) # uncomment to avoid double start tags
 
         # Greedy decoding or sampling
         do_sample: bool = False
@@ -261,8 +269,10 @@ class HuggingfaceLocalModel(backends.Model):
             generate_kwargs["temperature"] = self.get_temperature()
 
         outputs = accelerator.unwrap_model(self.model).generate(**generate_kwargs) # custom generation fn to get logprobs
+
         # Extract generated token IDs
         completion_ids = outputs.sequences[:, obs_tokens['input_ids'].size(1):]
+        completion_ids = pad(completion_ids, padding_value=pad_token_id, padding_side="right")
         completion_ids, completion_mask = truncate_right(completion_ids, eos_token_id, pad_token_id)
         generated_texts = self.tokenizer.batch_decode(outputs.sequences[:,:], skip_special_tokens=True)
 
@@ -275,7 +285,6 @@ class HuggingfaceLocalModel(backends.Model):
                                             accelerator=accelerator)
             
         actions = []
-
         for i, (text, generated_id_seq) in enumerate(zip(generated_texts, completion_ids)):
             # Remove special tokens from the generated text
             prompt_text = self.tokenizer.decode(obs_tokens['input_ids'][i], skip_special_tokens=True).strip()
@@ -288,47 +297,10 @@ class HuggingfaceLocalModel(backends.Model):
 
             actions.append([{"role": "assistant", "content": response_text}])
 
-        # print('---------------------')
-        # print(len(actions))
-        # print('+++++++++++==========++++++++')
-        # print(actions)
-        # print('=========================')
-        # print(actions[0])
-        # print()
-        # print(actions[0][0]['content'])
-        # print()
-        # print('-------------------')
-        # Pad filtered log probabilities to ensure consistent tensor shape
         if return_logprobs:
             assert logprobs.size(0) == len(observations), "Log probabilities batch size mismatch."
             assert torch.isfinite(logprobs).all(), "Log probabilities contain NaN or Inf values."
             
-        # --- Sanity Check ---
-        # assert len(actions) == len(observations), "Mismatch between number of actions and observations."
-        # try:
-        #     for i, action in enumerate(actions):
-        #         assert isinstance(action[0]["content"], str) and action[0]["content"], \
-        #             f"Generated action is not a valid string: {action}"
-        # except Exception as e:
-        #     print('=-=-=-=-=-=-=-=-=-=-=-=-=')
-        #     print(f"Action causing the error: {action}")
-        #     # print(f"Exception: {e}")
-        #     print(i)
-        #     print('Obs: ')
-        #     print(observations[i])
-        #     print()
-        #     print("Raw output sequences:", outputs.sequences[:, i])
-        #     print()
-        #     print("Truncated completion IDs:", completion_ids[i])
-        #     print()
-        #     print(generated_texts[i])
-        #     print('=-=-=-=-=-=-=-=-=-=-=-=-=')
-        #     # print()
-
-        #     raise ValueError("An invalid action was generated.")  # Raise a specific error
-            
-            # maybe raise error
-
         return actions, logprobs
 
     def batch_generate(self, batch_messages: List[List[Dict]], return_full_text: bool = False, log_messages: bool = False, accelerator=None):
@@ -350,7 +322,10 @@ class HuggingfaceLocalModel(backends.Model):
         # print(f"Input batch_messages: {batch_messages}")
         assert isinstance(batch_messages, list) and all(isinstance(messages, list) for messages in batch_messages), \
             "batch_messages must be a list of message histories (lists of dictionaries)."
-
+        
+        
+        self.tokenizer.padding_side = 'left'
+        print(f"PADDING SIDE: {self.tokenizer.padding_side}")
         # Log raw messages if requested
         if log_messages:
             for i, messages in enumerate(batch_messages):
@@ -687,6 +662,7 @@ def truncate_right(
         print("input_ids is a tensor.")
     else:
         print("input_ids is not a tensor.")
+    print(f"TRUNCATE_RIGHT: {pad_token_id}")
 
     trunc_idxs = first_true_indices(input_ids == stop_token_id).unsqueeze(-1)
     new_size = [1] * (len(input_ids.size()) - 1) + [input_ids.shape[1]]
@@ -717,3 +693,69 @@ def first_true_indices(bools: torch.Tensor, dtype=torch.long):
     row_len = bools.size(-1)
     zero_or_index = row_len * (~bools).type(dtype) + torch.arange(row_len, dtype=dtype, device=bools.device)
     return torch.min(zero_or_index, dim=-1).values
+
+
+def pad(
+    tensors: list[torch.Tensor],
+    padding_value: int = 0,
+    padding_side: str = "right",
+    pad_to_multiple_of: int | None = None,
+) -> torch.Tensor:
+    """
+    Pads a list of tensors to the same shape along the first dimension.
+
+    Args:
+        tensors (`list[torch.Tensor]`):
+            List of input tensors to pad.
+        padding_value (`int`):
+            Value to use for padding. Default is 0.
+        padding_side (`str`):
+            Side on which to add padding. Must be 'left' or 'right'. Default is 'right'.
+        pad_to_multiple_of (`int`, *optional*):
+            If set will pad the sequence to a multiple of the provided value.
+
+    Returns:
+        `torch.Tensor`:
+            A single tensor containing the padded tensors.
+
+    Examples:
+    ```python
+    >>> import torch
+
+    >>> pad([torch.tensor([1, 2, 3]), torch.tensor([4, 5])])
+    tensor([[1, 2, 3],
+            [4, 5, 0]])
+
+    >>> pad([torch.tensor([[1, 2], [3, 4]]), torch.tensor([[5, 6]])])
+    tensor([[[1, 2],
+            [3, 4]],
+            [[5, 6],
+            [0, 0]]])
+    ```
+    """
+    # Determine the maximum shape for each dimension
+    output_shape = np.max([t.shape for t in tensors], 0).tolist()
+
+    # Apply pad_to_multiple_of to the first (sequence) dimension
+    if pad_to_multiple_of is not None:
+        remainder = output_shape[0] % pad_to_multiple_of
+        if remainder != 0:
+            output_shape[0] += pad_to_multiple_of - remainder
+
+    # Create an output tensor filled with the padding value
+    output = torch.full((len(tensors), *output_shape), padding_value, dtype=tensors[0].dtype, device=tensors[0].device)
+
+    for i, t in enumerate(tensors):
+        if padding_side == "left":
+            seq_start = output_shape[0] - t.shape[0]
+        elif padding_side == "right":
+            seq_start = 0
+        else:
+            raise ValueError("padding_side must be 'left' or 'right'")
+
+        # Define the slices
+        seq_slice = slice(seq_start, seq_start + t.shape[0])
+        slices = (seq_slice,) + tuple(slice(0, s) for s in t.shape[1:])
+        output[i][slices] = t
+
+    return output

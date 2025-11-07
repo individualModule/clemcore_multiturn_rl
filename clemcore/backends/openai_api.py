@@ -6,6 +6,9 @@ import openai
 import base64
 import imghdr
 import httpx
+import asyncio
+from openai import AsyncOpenAI, RateLimitError, APIError
+from tenacity import AsyncRetrying, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 import clemcore.backends as backends
 from clemcore.backends.utils import ensure_messages_format
@@ -43,6 +46,10 @@ class OpenAIModel(backends.Model):
         """
         super().__init__(model_spec)
         self.client = client
+        creds = backends.load_credentials(NAME)
+        api_key = creds[NAME]["api_key"]
+        organization = creds[NAME]["organisation"] if "organisation" in creds[NAME] else None
+        self.async_client = AsyncOpenAI(api_key=api_key, organization=organization)
 
     def encode_image(self, image_path):
         """Encode an image to allow sending it to the OpenAI remote API.
@@ -148,10 +155,43 @@ class OpenAIModel(backends.Model):
 
         return prompt, response, response_text
 
+    async def _generate_single_async(self, prompt: List[Dict], temperature: float) -> Tuple[Any, Any, str]:
+        """Generate a single response asynchronously with retry logic."""
+        async for attempt in AsyncRetrying(
+            stop=stop_after_attempt(3),
+            wait=wait_exponential(multiplier=1, min=4, max=90),
+            retry=retry_if_exception_type((RateLimitError, APIError)),
+            reraise=True
+        ):
+            with attempt:
+                if 'reasoning_model' in self.model_spec.model_config:
+                    api_response = await self.async_client.chat.completions.create(
+                        model=self.model_spec.model_id,
+                        messages=prompt,
+                        temperature=temperature,
+                        timeout=120.0  # 2 minute timeout per request
+                    )
+                else:
+                    api_response = await self.async_client.chat.completions.create(
+                        model=self.model_spec.model_id,
+                        messages=prompt,
+                        temperature=temperature,
+                        max_tokens=self.get_max_tokens(),
+                        timeout=25.0  # 2 minute timeout per request
+                    )
 
-    def batch_generate(self, batch_messages: List[List[Dict]],  **kwargs) -> List[Tuple[Any, Any, str]]:
+                message = api_response.choices[0].message
+                if message.role != "assistant":  # safety check
+                    raise AttributeError("Response message role is " + message.role + " but should be 'assistant'")
+                response_text = message.content.strip()
+                response = json.loads(api_response.json())
+
+                return prompt, response, response_text
+
+    def batch_generate(self, batch_messages: List[List[Dict]], **kwargs) -> List[Tuple[Any, Any, str]]:
         """
-        Generate responses for a batch of message histories.
+        Generate responses for a batch of message histories concurrently.
+        The order of responses matches the order of input messages.
 
         Args:
             batch_messages: A batch of message histories. Each message history is a list of dictionaries.
@@ -174,38 +214,43 @@ class OpenAIModel(backends.Model):
                 - The prompt used for generation.
                 - The response object containing metadata.
                 - The generated response text.
+            The order matches the input batch_messages order.
         """
-        if 'temp' in kwargs:
-            # temp is present in kwargs
-            temperature = kwargs['temp']
-        else:
-            # temp is not present, use default
-            temperature = self.get_temperature()
-        print(f"Temperture: {temperature}")
+        temperature = kwargs.get('temp', self.get_temperature())
+        print(f"Temperature: {temperature}")
+        
         batch_prompts = [self.encode_messages(messages) for messages in batch_messages]
-        responses = []
-
-        for prompt in batch_prompts:
-            if 'reasoning_model' in self.model_spec.model_config:
-                api_response = self.client.chat.completions.create(
-                    model=self.model_spec.model_id,
-                    messages=prompt,
-                    temperature=temperature
-                )
-            else:
-                api_response = self.client.chat.completions.create(
-                    model=self.model_spec.model_id,
-                    messages=prompt,
-                    temperature=temperature,
-                    max_tokens=self.get_max_tokens()
-                )
-
-            message = api_response.choices[0].message
-            if message.role != "assistant":  # safety check
-                raise AttributeError("Response message role is " + message.role + " but should be 'assistant'")
-            response_text = message.content.strip()
-            response = json.loads(api_response.json())
-
-            responses.append((prompt, response, response_text))
-
-        return responses
+        
+        # Run all requests concurrently (order is preserved by asyncio.gather)
+        return asyncio.run(self._batch_generate_async(batch_prompts, temperature))
+    
+    async def _batch_generate_async(self, batch_prompts: List[List[Dict]], temperature: float) -> List[Tuple[Any, Any, str]]:
+        """Generate responses for all prompts concurrently while preserving order."""
+        # Limit concurrent requests to avoid rate limiting (adjust based on your API tier)
+        semaphore = asyncio.Semaphore(5)  # Reduced to 5 concurrent requests
+        
+        async def limited_generate(prompt):
+            async with semaphore:
+                return await self._generate_single_async(prompt, temperature)
+        
+        tasks = [limited_generate(prompt) for prompt in batch_prompts]
+        
+        # Add overall timeout and better error handling
+        try:
+            # Total timeout: 25 seconds per request * 3 retries + buffer
+            total_timeout = len(batch_prompts) * 25 / 5 + 60  # Adjust based on semaphore size
+            results = await asyncio.wait_for(
+                asyncio.gather(*tasks, return_exceptions=True),
+                timeout=total_timeout
+            )
+            
+            # Check for exceptions in results
+            for i, result in enumerate(results):
+                if isinstance(result, Exception):
+                    logger.error(f"Request {i} failed: {result}")
+                    raise result
+            
+            return results
+        except asyncio.TimeoutError:
+            logger.error(f"Batch generation timed out after {total_timeout} seconds")
+            raise

@@ -5941,7 +5941,7 @@
             "url": "https://github.com/meta-llama/llama-models/blob/main/models/llama3_1/LICENSE"
         },
         "model_config": {
-            "peft_model": "kimono998/curriculum_wordle_clue_v2_cont_1_lora_adapter_iter_55",
+            "peft_model": "kimono998/c2_wordle_clue_best",
             "requires_api_key": false,
             "premade_chat_template": true,
             "eos_to_cull": "<\\|eot_id\\|>"
@@ -5970,7 +5970,7 @@
             "url": "https://github.com/meta-llama/llama-models/blob/main/models/llama3_1/LICENSE"
         },
         "model_config": {
-            "peft_model": "kimono998/curriculum_wordle_critic_v1_lora_adapter_iter_20",
+            "peft_model": "kimono998/c2_wordle_critic_v2_cont_v1_lora_adapter_iter_15",
             "requires_api_key": false,
             "premade_chat_template": true,
             "eos_to_cull": "<\\|eot_id\\|>"
@@ -5999,7 +5999,7 @@
             "url": "https://github.com/meta-llama/llama-models/blob/main/models/llama3_1/LICENSE"
         },
         "model_config": {
-            "peft_model": "kimono998/curriculum_taboo_v1_lora_adapter_iter_50",
+            "peft_model": "kimono998/c2_taboo_best",
             "requires_api_key": false,
             "premade_chat_template": true,
             "eos_to_cull": "<\\|eot_id\\|>"
