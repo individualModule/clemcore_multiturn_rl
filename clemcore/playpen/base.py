@@ -246,6 +246,11 @@ class EvalBatchRollout(BatchRollout):
         self.callbacks.on_rollout_start(game_env, self.num_timesteps)
         print(accelerator)
 
+        # retry tracking
+        env_retry_counts = {}
+        max_retries = 5
+
+
         collected_trajectories = 0
         while not game_env.is_done():
             # Collect observations from all active environments
@@ -292,10 +297,32 @@ class EvalBatchRollout(BatchRollout):
                                                                             rollout_buffer,
                                                                             collected_trajectories)
                         
-                    print("----")
-                    print(f"Done on Player: {player}")
-                    # Shut down the environment
-                    game_env.on_done(env_id)
+                        # if done on learner -- shut down env
+                        print("----")
+                        print(f"Done on Player: {player}")
+                        # Shut down the environment
+                        game_env.on_done(env_id)
+                        env_retry_counts.pop(env_id, None)
+
+                    else: 
+                        # if done on teacher -- reset environment
+                        # Initialize retry count if not exists
+                        if env_id not in env_retry_counts:
+                            env_retry_counts[env_id] = 0
+                        
+                        # Check if we haven't exceeded max retries
+                        if env_retry_counts[env_id] < max_retries:
+                            env_retry_counts[env_id] += 1
+                            print(f"Resetting env {env_id} (retry {env_retry_counts[env_id]}/{max_retries})")
+                            game_env.env_reset(env_id)
+                        else:
+                            # Max retries reached, shut down the environment
+                            print(f"Max retries ({max_retries}) reached for env {env_id}. Shutting down.")
+                            game_env.on_done(env_id)
+                            env_retry_counts.pop(env_id, None)
+
+
+
                 
 
         self.callbacks.on_rollout_end()

@@ -58,6 +58,9 @@ def make_tree_env(game_spec: GameSpec, players: List[Model],
 def make_batch_env(game_spec: GameSpec, players: List[Model],
                    instances_name: str = None, shuffle_instances: bool = False, batch_size: int = 4):
     
+    if not instances_name:
+        raise ValueError("instances_name must be provided")
+    
     with benchmark.load_from_spec(game_spec, do_setup=True, instances_filename=instances_name) as game:
         task_iterator = game.create_game_instance_iterator(shuffle_instances)
         yield BatchEnv(game, players, task_iterator, batch_size=batch_size)
@@ -66,6 +69,9 @@ def make_batch_env(game_spec: GameSpec, players: List[Model],
 def make_eval_env(game_spec: GameSpec, players: List[Model],
                    instances_name: str = None, shuffle_instances: bool = False, batch_size: int = 4):
     
+    if not instances_name:
+        raise ValueError("instances_name must be provided")
+
     with benchmark.load_from_spec(game_spec, do_setup=True, instances_filename=instances_name) as game:
         task_iterator = game.create_game_instance_iterator(shuffle_instances)
         yield EvalBatchEnv(game, players, task_iterator, batch_size=batch_size)

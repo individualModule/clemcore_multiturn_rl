@@ -6004,7 +6004,37 @@
             "premade_chat_template": true,
             "eos_to_cull": "<\\|eot_id\\|>"
         }
+    },
+    {
+        "model_name": "Wordle-curr-refgame",
+        "backend": "huggingface_local",
+        "huggingface_id": "meta-llama/Meta-Llama-3.1-8B-Instruct",
+        "release_date": "2024-07-23",
+        "open_weight": true,
+        "parameters": "8B",
+        "languages": [
+            "en",
+            "de",
+            "fr",
+            "it",
+            "pt",
+            "hi",
+            "es",
+            "th"
+        ],
+        "context_size": "128k",
+        "license": {
+            "name": "Meta",
+            "url": "https://github.com/meta-llama/llama-models/blob/main/models/llama3_1/LICENSE"
+        },
+        "model_config": {
+            "peft_model": "kimono998/c2_refgame_best",
+            "requires_api_key": false,
+            "premade_chat_template": true,
+            "eos_to_cull": "<\\|eot_id\\|>"
+        }
     }
+
 
 
 

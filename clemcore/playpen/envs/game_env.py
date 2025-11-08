@@ -277,21 +277,7 @@ class EvalBatchEnv(PlayPenEnv):
         for key, response in responses.items():
             env = self.envs[key]
             done, info = env.step(response)
-            info_dict[key] = {"done": done, "info": info}
-
-            # If there are remaining items in the queue, create a new environment
-            # this can't happen here.
-            # if done:
-            #     self.shutdown_env(key)
-
-            #     if len(self.queue) > 0:
-            #         new_env_id = max(self.envs.keys(), default=-1) + 1
-            #         self.envs[new_env_id] = ExecuteSingle(
-            #             self._game,
-            #             self._player_models,
-            #             self.queue.pop(0))
-            #         self.active_envs.append(new_env_id)
-                    
+            info_dict[key] = {"done": done, "info": info}                    
 
         return info_dict
 
