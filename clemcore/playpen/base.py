@@ -2,7 +2,7 @@ import abc
 import torch
 from typing import Union
 
-from clemcore.backends import Model
+from clemcore.backends import Model, CustomResponseModel
 from clemcore.clemgame import GameRegistry
 from clemcore.playpen.envs import PlayPenEnv
 from clemcore.playpen.buffers import RolloutBuffer, BatchReplayBuffer, BatchRolloutBuffer
@@ -16,6 +16,7 @@ class BasePlayPen(abc.ABC):
         self.teacher = teacher
         self.num_timesteps = 0
         self.callbacks = CallbackList()
+
 
     def add_callback(self, callback: BaseCallback):
         self.callbacks.append(callback)
@@ -65,6 +66,13 @@ class BatchRollout:
         self.num_timesteps = 0
         self.callbacks = CallbackList()
 
+        self.p2_is_programmatic = isinstance(teacher, CustomResponseModel) or not hasattr(teacher, 'batch_generate')
+        if not self.teacher:
+            self.p2_is_programmatic = False
+
+        if self.p2_is_programmatic:
+            print("WARNING: Programmatic player 2! ")
+
     def add_callback(self, callback: BaseCallback):
         self.callbacks.append(callback)
 
@@ -104,14 +112,34 @@ class BatchRollout:
 
             # Perform inference for learners
             # learner_responses = self.accelerator.unwrap_model(self.learner.model).batch_generate(learner_inputs) if learner_inputs else []
+            print("LEARNER >>>>>>>>>>>>>>>")
+
             learner_responses = self.learner.batch_generate(learner_inputs, accelerator=accelerator) if learner_inputs else []
 
             self._update_player_context(learner_env_ids, learner_responses, observations)
             # Perform inference for teachers
             # teacher_responses = self.accelerator.unwrap_model(self.teacher.model).batch_generate(teacher_inputs) if teacher_inputs else []
-            teacher_responses = self.teacher.batch_generate(teacher_inputs, accelerator=accelerator) if teacher_inputs else []
+            print(f" TEACHER >>>>>>>>>>>>>>")
 
+            if self.p2_is_programmatic:
+                teacher_responses = []
+                for env_id, context in zip(teacher_env_ids, teacher_inputs):
+                    player = observations[env_id]["player"]
+                    resp = player.programmatic_call(context)
+                    teacher_responses.append(resp)
+
+            else:
+                teacher_responses = self.teacher.batch_generate(teacher_inputs, accelerator=accelerator) if teacher_inputs else []
+            
+            
+            # print(f'Input sample: ------ {teacher_inputs[0]}')
+            # print(f'Response sample: ---- {teacher_responses[0]}')
             self._update_player_context(teacher_env_ids, teacher_responses, observations)
+
+            # if len(learner_inputs) >0:
+            #     print(f'Input sample: ------ {learner_inputs[0]}')
+            #     print(f'Response sample: ---- {learner_responses[0]}')
+
             print(f"Teacher resp: {len(teacher_responses)} --- Learner Resp: {len(learner_responses)}")
             # Combine responses for step processing
             responses = {env_id: response[2] for env_id, response in zip(learner_env_ids + teacher_env_ids, learner_responses + teacher_responses)}
@@ -268,7 +296,16 @@ class EvalBatchRollout(BatchRollout):
 
             # Perform inference for teachers
             # teacher_responses = accelerator.unwrap_model(self.teacher.model).batch_generate(teacher_inputs) if teacher_inputs else []
-            teacher_responses = self.teacher.batch_generate(teacher_inputs, accelerator=accelerator, temp=0) if teacher_inputs else []
+            if self.p2_is_programmatic:
+                teacher_responses = []
+                for env_id, context in zip(teacher_env_ids, teacher_inputs):
+                    player = observations[env_id]["player"]
+                    # resp = player.model.programmatic_call(context)
+                    resp = player.programmatic_call(context)
+                    teacher_responses.append(resp)
+
+            else:
+                teacher_responses = self.teacher.batch_generate(teacher_inputs, accelerator=accelerator) if teacher_inputs else []
 
             self._update_player_context(teacher_env_ids, teacher_responses, observations)
             print(f"Teacher resp: {len(teacher_responses)} --- Learner Resp: {len(learner_responses)}")

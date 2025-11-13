@@ -71,7 +71,12 @@ def make_eval_env(game_spec: GameSpec, players: List[Model],
     
     if not instances_name:
         raise ValueError("instances_name must be provided")
-
+    
+    print('Loading from spec!!')
+    print(game_spec)
+    print(instances_name)
     with benchmark.load_from_spec(game_spec, do_setup=True, instances_filename=instances_name) as game:
+        print("loaded benchmark - task iterator is next")
         task_iterator = game.create_game_instance_iterator(shuffle_instances)
+        print("iterator is done. Now yield batchenv")
         yield EvalBatchEnv(game, players, task_iterator, batch_size=batch_size)

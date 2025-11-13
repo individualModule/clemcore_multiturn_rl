@@ -190,6 +190,9 @@ class Player(abc.ABC):
         }
         return prompt, response_object, response_text
 
+    def programmatic_call(self, context):
+        return self.__call_model(context)
+    
     def _terminal_response(self, context: Dict) -> str:
         """Response for human interaction via terminal.
         Overwrite this method to customize human inputs (model_name: human, terminal).

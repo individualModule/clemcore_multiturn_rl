@@ -3,6 +3,7 @@ Uses HF tokenizers instruct/chat templates for proper input format per model.
 """
 from dataclasses import dataclass
 import logging
+import time  # Add this import
 
 from typing import List, Dict, Tuple, Any, Union
 import torch
@@ -11,7 +12,7 @@ from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig, Static
 from peft import PeftModel
 from jinja2 import TemplateError
 import numpy as np
-
+import os 
 import clemcore.backends as backends
 from clemcore.backends.utils import ensure_alternating_roles
 
@@ -115,7 +116,7 @@ def load_model(model_spec: backends.ModelSpec) -> Any:
     logger.info(f'Start loading huggingface model weights: {model_spec.model_name}')
     # accelerate only wirks with no device map
     #model_args = dict(device_map="auto", torch_dtype="auto")
-    model_args = dict(device_map=None, torch_dtype="auto")
+    model_args = dict(device_map=None, torch_dtype="auto", attn_implementation="flash_attention_2")
 
     if "load_in_8bit" in model_spec.model_config:
         model_args["load_in_8bit"] = model_spec.model_config["load_in_8bit"]
@@ -153,7 +154,9 @@ class HuggingfaceLocal(backends.Backend):
         Returns:
             The Model class instance of the model.
         """
-        torch.set_num_threads(1)
+        # torch.set_num_threads(1)
+        torch.set_num_threads(os.cpu_count() // 2)
+        print(f"cpu count: {os.cpu_count() // 2}")
         return HuggingfaceLocalModel(model_spec)
 
 
@@ -306,50 +309,59 @@ class HuggingfaceLocalModel(backends.Model):
     def batch_generate(self, batch_messages: List[List[Dict]], return_full_text: bool = False, log_messages: bool = False, accelerator=None):
         """
         Generate responses for a batch of message histories.
-
-        Args:
-            batch_messages: A batch of message histories. Each message history is a list of dictionaries.
-            return_full_text: If True, return the full input context along with the response.
-            log_messages: If True, log the raw and cleaned messages passed.
-
-        Returns:
-            A list of tuples, where each tuple contains:
-                - The prompt used for generation.
-                - The response object containing metadata.
-                - The generated response text.
         """
+        print('generating batch')
+        # Start total timing
+        start_total = time.time()
+        print(f"batch_generate called at: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(start_total))}")
+
         # Ensure batch_messages is a list of lists
-        # print(f"Input batch_messages: {batch_messages}")
         assert isinstance(batch_messages, list) and all(isinstance(messages, list) for messages in batch_messages), \
             "batch_messages must be a list of message histories (lists of dictionaries)."
         
-        
         self.tokenizer.padding_side = 'left'
-        print(f"PADDING SIDE: {self.tokenizer.padding_side}")
+        
         # Log raw messages if requested
         if log_messages:
             for i, messages in enumerate(batch_messages):
                 logger.info(f"Raw messages for batch {i}: {messages}")
 
-        # Flatten and clean messages for each batch
+        # TIMING: Message cleaning
+        start_clean = time.time()
         batch_cleaned_messages = [ensure_alternating_roles(messages) for messages in batch_messages]
-
-        # Log cleaned messages if requested
+        time_clean = time.time() - start_clean
+        
         if log_messages:
             for i, messages in enumerate(batch_cleaned_messages):
                 logger.info(f"Cleaned messages for batch {i}: {messages}")
 
-        # Apply chat template and tokenize for the batch
-        batch_prompt_template = self.tokenizer.apply_chat_template(batch_cleaned_messages, add_generation_prompt=True, tokenize=False)
-        batch_prompt_tokens = self.tokenizer(batch_prompt_template, padding=True, truncation=True, return_tensors="pt").to(self.device)
+        # TIMING: Chat template application
+        start_template = time.time()
+        batch_prompt_template = self.tokenizer.apply_chat_template(
+            batch_cleaned_messages, add_generation_prompt=True, tokenize=False
+        )
+        time_template = time.time() - start_template
 
-        # Decode the prompts for logging
-        batch_prompt_texts = self.tokenizer.batch_decode(batch_prompt_tokens["input_ids"], skip_special_tokens=True)
+        # TIMING: Tokenization
+        start_tokenize = time.time()
+        batch_prompt_tokens = self.tokenizer(
+            batch_prompt_template, padding=True, truncation=True, return_tensors="pt"
+        ).to(self.device)
+        time_tokenize = time.time() - start_tokenize
+
+        # TIMING: Decode prompts
+        start_decode = time.time()
+        batch_prompt_texts = self.tokenizer.batch_decode(
+            batch_prompt_tokens["input_ids"], skip_special_tokens=True
+        )
+        time_decode = time.time() - start_decode
 
         # Check context limits for each batch
         for i, prompt_tokens in enumerate(batch_prompt_tokens["input_ids"]):
-            context_check = _check_context_limit(self.context_size, prompt_tokens, max_new_tokens=self.get_max_tokens())
-            if not context_check[0]:  # If context limit exceeded
+            context_check = _check_context_limit(
+                self.context_size, prompt_tokens, max_new_tokens=self.get_max_tokens()
+            )
+            if not context_check[0]:
                 logger.info(f"Context token limit for batch {i} exceeded: {context_check[1]}/{context_check[3]}")
                 raise backends.ContextExceededError(
                     f"Context token limit for batch {i} exceeded",
@@ -358,28 +370,37 @@ class HuggingfaceLocalModel(backends.Model):
                     context_size=context_check[3]
                 )
 
-        # Perform generation for the batch
+        # TIMING: Generation
         do_sample = self.get_temperature() > 0.0
         generate_kwargs = {
             "input_ids": batch_prompt_tokens["input_ids"],
             "attention_mask": batch_prompt_tokens["attention_mask"],
             "max_new_tokens": self.get_max_tokens(),
             "do_sample": do_sample,
-            "temperature": self.get_temperature() if do_sample else None
+            "temperature": self.get_temperature() if do_sample else None,
+            "use_cache": True  # Enable KV caching
         }
+        
+        start_generate = time.time()
         batch_model_output_ids = accelerator.unwrap_model(self.model).generate(**generate_kwargs)
+        time_generate = time.time() - start_generate
 
-        # Decode the generated outputs
+        # TIMING: Decode outputs
+        start_decode_output = time.time()
         batch_model_outputs = self.tokenizer.batch_decode(batch_model_output_ids, skip_special_tokens=True)
+        time_decode_output = time.time() - start_decode_output
 
-        # Prepare the responses
+        # TIMING: Prepare responses
+        start_prepare = time.time()
         batch_responses = []
         for i, model_output in enumerate(batch_model_outputs):
             prompt_text = batch_prompt_texts[i]
             if not return_full_text:
                 response_text = model_output.replace(prompt_text, "").strip()
                 if "output_split_prefix" in self.model_spec.model_config:
-                    response_text = response_text.rsplit(self.model_spec["model_config"]["output_split_prefix"], maxsplit=1)[1]
+                    response_text = response_text.rsplit(
+                        self.model_spec["model_config"]["output_split_prefix"], maxsplit=1
+                    )[1]
                 eos_to_cull = self.model_spec["model_config"]["eos_to_cull"]
                 response_text = re.sub(eos_to_cull, "", response_text)
             else:
@@ -388,12 +409,29 @@ class HuggingfaceLocalModel(backends.Model):
             response_object = {"response": model_output}
             batch_responses.append((prompt_text, response_object, response_text))
 
-            # Log the response if requested
             if log_messages:
                 logger.info(f"Response for batch {i}: {response_text}")
-        # print("Output batch_responses (response_text only):")
-        # for response in batch_responses:
-        #     print(response[2])  # Print only the response_text
+        
+        time_prepare = time.time() - start_prepare
+        time_total = time.time() - start_total
+
+        end_total = time.time()
+        print(f"batch_generate finished at: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(end_total))}")
+
+        # Print timing breakdown
+        print(f"\n{'='*60}")
+        print(f"BATCH_GENERATE TIMING (batch_size={len(batch_messages)})")
+        print(f"{'='*60}")
+        print(f"Message cleaning:      {time_clean*1000:7.2f} ms ({time_clean/time_total*100:5.1f}%)")
+        print(f"Chat template:         {time_template*1000:7.2f} ms ({time_template/time_total*100:5.1f}%)")
+        print(f"Tokenization:          {time_tokenize*1000:7.2f} ms ({time_tokenize/time_total*100:5.1f}%)")
+        print(f"Decode prompts:        {time_decode*1000:7.2f} ms ({time_decode/time_total*100:5.1f}%)")
+        print(f"GENERATION:            {time_generate*1000:7.2f} ms ({time_generate/time_total*100:5.1f}%) <<<")
+        print(f"Decode outputs:        {time_decode_output*1000:7.2f} ms ({time_decode_output/time_total*100:5.1f}%)")
+        print(f"Prepare responses:     {time_prepare*1000:7.2f} ms ({time_prepare/time_total*100:5.1f}%)")
+        print(f"{'='*60}")
+        print(f"TOTAL:                 {time_total*1000:7.2f} ms")
+        print(f"{'='*60}\n")
 
         return batch_responses
 
